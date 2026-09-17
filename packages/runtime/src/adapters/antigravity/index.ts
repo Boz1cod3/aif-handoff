@@ -17,6 +17,7 @@ import {
   ANTIGRAVITY_MODELS,
   DEFAULT_ANTIGRAVITY_MODEL,
   LIGHT_ANTIGRAVITY_MODEL,
+  discoverAntigravityModels,
 } from "./models.js";
 
 export type AntigravityRuntimeAdapterLogger = AntigravityCliLogger;
@@ -98,7 +99,7 @@ export function createAntigravityRuntimeAdapter(
     },
 
     async listModels(_input: RuntimeModelListInput): Promise<RuntimeModel[]> {
-      return [...ANTIGRAVITY_MODELS];
+      return discoverAntigravityModels({ cliPath: executablePath });
     },
 
     async validateConnection(

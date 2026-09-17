@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createAntigravityRuntimeAdapter, registerRuntimeModule } from "../index.js";
 import {
   ANTIGRAVITY_MODELS,
   DEFAULT_ANTIGRAVITY_MODEL,
   LIGHT_ANTIGRAVITY_MODEL,
+  discoverAntigravityModels,
+  clearDiscoveredModelsCache,
 } from "../models.js";
+import * as findPathModule from "../findPath.js";
 import { classifyAntigravityRuntimeError } from "../errors.js";
 import { bootstrapRuntimeRegistry } from "../../../bootstrap.js";
 import { UsageReporting, RuntimeTransport } from "../../../types.js";
@@ -35,7 +38,7 @@ describe("Antigravity Runtime Adapter", () => {
   });
 
   describe("Model discovery", () => {
-    const adapter = createAntigravityRuntimeAdapter();
+    const adapter = createAntigravityRuntimeAdapter({ executablePath: undefined });
 
     it("lists all 14 official Antigravity models", async () => {
       const models = await adapter.listModels!({
@@ -142,16 +145,84 @@ describe("Antigravity Runtime Adapter", () => {
     });
   });
 
-  describe("Connection validation with installed agy binary", () => {
-    const adapter = createAntigravityRuntimeAdapter();
+  describe("Connection validation", () => {
+    const adapter = createAntigravityRuntimeAdapter({
+      executablePath: "/mock/bin/agy.exe",
+    });
 
-    it("validates installed agy.exe successfully", async () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("reports success when probeAntigravityCli succeeds", async () => {
+      vi.spyOn(findPathModule, "probeAntigravityCli").mockReturnValueOnce({
+        ok: true,
+        version: "1.2.5",
+      });
+
       const result = await adapter.validateConnection!({
         runtimeId: "antigravity",
       });
 
       expect(result.ok).toBe(true);
-      expect(result.message).toContain("Google Antigravity CLI");
+      expect(result.message).toContain("Google Antigravity CLI 1.2.5");
+    });
+
+    it("reports failure when probeAntigravityCli fails", async () => {
+      vi.spyOn(findPathModule, "probeAntigravityCli").mockReturnValueOnce({
+        ok: false,
+        error: "CLI not found in PATH",
+      });
+
+      const result = await adapter.validateConnection!({
+        runtimeId: "antigravity",
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("Antigravity CLI is not reachable");
+      expect(result.message).toContain("CLI not found in PATH");
+    });
+
+    it("rejects .cmd batch script due to shell injection protection", async () => {
+      const result = await adapter.validateConnection!({
+        runtimeId: "antigravity",
+        options: { antigravityCliPath: "C:\\tools\\agy.cmd" },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("Executing Antigravity via batch script");
+    });
+
+    const hasLiveCli = Boolean(process.env.TEST_ANTIGRAVITY_INTEGRATION);
+    it.runIf(hasLiveCli)(
+      "validates installed agy.exe live when TEST_ANTIGRAVITY_INTEGRATION is enabled",
+      async () => {
+        const liveAdapter = createAntigravityRuntimeAdapter();
+        const result = await liveAdapter.validateConnection!({
+          runtimeId: "antigravity",
+        });
+        expect(result.ok).toBe(true);
+        expect(result.message).toContain("Google Antigravity CLI 1.2.5");
+      },
+    );
+  });
+
+  describe("Dynamic model discovery and fallback", () => {
+    beforeEach(() => {
+      clearDiscoveredModelsCache();
+    });
+
+    it("falls back to ANTIGRAVITY_MODELS when cliPath is missing", async () => {
+      const models = await discoverAntigravityModels({ cliPath: undefined });
+      expect(models.length).toBe(14);
+    });
+
+    it("falls back to ANTIGRAVITY_MODELS when CLI execution fails", async () => {
+      const models = await discoverAntigravityModels({
+        cliPath: "/non-existent/path/to/agy.exe",
+        forceRefresh: true,
+      });
+      expect(models.length).toBe(14);
     });
   });
 });

@@ -10,18 +10,13 @@ import {
   sleepMs,
   withProcessTimeouts,
 } from "../../timeouts.js";
-import { classifyAntigravityRuntimeError } from "./errors.js";
+import { classifyAntigravityRuntimeError, AntigravityRuntimeAdapterError } from "./errors.js";
 import { findAntigravityPath } from "./findPath.js";
 import { buildToolUseEvents } from "../../toolEvents.js";
 import { DEFAULT_ANTIGRAVITY_MODEL } from "./models.js";
 import { PROXY_ENV_VARS } from "../../proxyEnv.js";
-import { assertSafeWindowsShellExecutablePath } from "../../shellSafety.js";
 
 const IS_WINDOWS = process.platform === "win32";
-
-function quoteIfNeeded(arg: string): string {
-  return arg.includes(" ") || arg.includes('"') ? `"${arg.replace(/"/g, '\\"')}"` : arg;
-}
 
 function spawnSubprocess(
   cliPath: string,
@@ -33,14 +28,11 @@ function spawnSubprocess(
     IS_WINDOWS &&
     (cliPath.toLowerCase().endsWith(".cmd") || cliPath.toLowerCase().endsWith(".bat"))
   ) {
-    assertSafeWindowsShellExecutablePath(cliPath, "Antigravity CLI path");
-    const cmd = process.env.ComSpec ?? "cmd.exe";
-    const cmdLine = [cliPath, ...args.map(quoteIfNeeded)].join(" ");
-    return spawn(cmd, ["/d", "/c", cmdLine], {
-      cwd,
-      env,
-      windowsVerbatimArguments: true,
-    });
+    throw new AntigravityRuntimeAdapterError(
+      `Executing Antigravity via batch script (${cliPath}) is prohibited to prevent Windows shell injection. Point directly to agy.exe.`,
+      "ANTIGRAVITY_SECURITY_VIOLATION",
+      "permission",
+    );
   }
   return spawn(cliPath, args, {
     cwd,
@@ -344,7 +336,7 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
     "accept-edits",
   ];
 
-  if (execution?.bypassPermissions !== false) {
+  if (execution?.bypassPermissions === true) {
     args.push("--dangerously-skip-permissions");
   }
 

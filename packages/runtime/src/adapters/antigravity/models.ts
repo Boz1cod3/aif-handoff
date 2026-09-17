@@ -1,4 +1,8 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { RuntimeModel } from "../../types.js";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Official models available in Google Antigravity CLI (`agy models`).
@@ -152,3 +156,82 @@ export const ANTIGRAVITY_MODELS: RuntimeModel[] = [
 
 export const DEFAULT_ANTIGRAVITY_MODEL = "gemini-3.8-flash-high";
 export const LIGHT_ANTIGRAVITY_MODEL = "gemini-3.8-flash-low";
+
+let cachedModels: RuntimeModel[] | null = null;
+let cachedModelsAt = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+export interface DiscoverAntigravityModelsOptions {
+  cliPath?: string;
+  timeoutMs?: number;
+  forceRefresh?: boolean;
+}
+
+/**
+ * Dynamically discover models from `agy models` with in-memory caching and
+ * static fallback to ANTIGRAVITY_MODELS.
+ */
+export async function discoverAntigravityModels(
+  options: DiscoverAntigravityModelsOptions = {},
+): Promise<RuntimeModel[]> {
+  const now = Date.now();
+  if (!options.forceRefresh && cachedModels && now - cachedModelsAt < CACHE_TTL_MS) {
+    return cachedModels;
+  }
+
+  const cliPath = options.cliPath;
+  if (!cliPath) {
+    return ANTIGRAVITY_MODELS;
+  }
+
+  try {
+    const timeoutMs = options.timeoutMs ?? 3_000;
+    const { stdout } = await execFileAsync(cliPath, ["models"], {
+      timeout: timeoutMs,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+
+    const parsed: RuntimeModel[] = [];
+    const lines = stdout.split(/\r?\n/);
+    const knownMap = new Map(ANTIGRAVITY_MODELS.map((m) => [m.id, m]));
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("Fetching available models")) {
+        continue;
+      }
+      const parts = line.split("\t");
+      if (parts.length >= 1) {
+        const id = parts[0].trim();
+        const label = parts[1]?.trim() || id;
+        if (!id) continue;
+
+        const known = knownMap.get(id);
+        parsed.push({
+          id,
+          label: known?.label ?? label,
+          supportsStreaming: true,
+          metadata: known?.metadata ?? {
+            contextWindow: 1048576,
+          },
+        });
+      }
+    }
+
+    if (parsed.length > 0) {
+      cachedModels = parsed;
+      cachedModelsAt = now;
+      return parsed;
+    }
+  } catch {
+    // If agy models fails or CLI is unreachable, fall back safely to static registry
+  }
+
+  return ANTIGRAVITY_MODELS;
+}
+
+export function clearDiscoveredModelsCache(): void {
+  cachedModels = null;
+  cachedModelsAt = 0;
+}
