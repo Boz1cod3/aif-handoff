@@ -205,15 +205,25 @@ function processStreamJsonLine(
     }
 
     // Check tool calls
-    if (su.step_type === "tool_call" || su.tool_calls || su.tool_name) {
+    if (
+      su.step_type === "tool" ||
+      su.step_type === "tool_call" ||
+      su.tool_calls ||
+      su.tool_name ||
+      su.tool_info
+    ) {
+      const toolInfo = asRecord(su.tool_info);
       const toolCalls = Array.isArray(su.tool_calls)
         ? (su.tool_calls as Array<Record<string, unknown>>)
-        : su.tool_name
+        : su.tool_name || toolInfo.name
           ? [
               {
-                name: su.tool_name,
-                id: su.tool_id ?? su.call_id,
-                input: su.tool_input ?? su.arguments,
+                name: su.tool_name ?? toolInfo.name,
+                id:
+                  su.tool_id ??
+                  su.call_id ??
+                  (su.step_index != null ? `step-${su.step_index}` : null),
+                input: toolInfo.parameters ?? su.tool_input ?? su.arguments,
               },
             ]
           : [];
@@ -282,7 +292,7 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
 
   const args: string[] = [
     "-p",
-    "-",
+    input.prompt,
     "--model",
     model,
     "--output-format",
@@ -293,12 +303,12 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
     tempLogFile,
     "--project",
     `handoff-${runId}`,
+    "--mode",
+    "accept-edits",
   ];
 
-  if (execution?.bypassPermissions) {
+  if (execution?.bypassPermissions !== false) {
     args.push("--dangerously-skip-permissions");
-  } else {
-    args.push("--mode", "accept-edits");
   }
 
   const effort = options.effort;
@@ -390,11 +400,10 @@ async function runCliAttempt(
     execution?.onStderr?.(text);
   });
 
-  // Prompt is streamed via stdin
+  // Close stdin so child process does not wait on interactive console input
   child.stdin!.on("error", () => {
     /* ignore broken-pipe */
   });
-  child.stdin!.write(input.prompt);
   child.stdin!.end();
 
   // Abort handling
