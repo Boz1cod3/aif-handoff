@@ -15,8 +15,40 @@ import { findAntigravityPath } from "./findPath.js";
 import { buildToolUseEvents } from "../../toolEvents.js";
 import { DEFAULT_ANTIGRAVITY_MODEL } from "./models.js";
 import { PROXY_ENV_VARS } from "../../proxyEnv.js";
+import { assertSafeWindowsShellExecutablePath } from "../../shellSafety.js";
 
 const IS_WINDOWS = process.platform === "win32";
+
+function quoteIfNeeded(arg: string): string {
+  return arg.includes(" ") || arg.includes('"') ? `"${arg.replace(/"/g, '\\"')}"` : arg;
+}
+
+function spawnSubprocess(
+  cliPath: string,
+  args: string[],
+  cwd: string | undefined,
+  env: Record<string, string>,
+) {
+  if (
+    IS_WINDOWS &&
+    (cliPath.toLowerCase().endsWith(".cmd") || cliPath.toLowerCase().endsWith(".bat"))
+  ) {
+    assertSafeWindowsShellExecutablePath(cliPath, "Antigravity CLI path");
+    const cmd = process.env.ComSpec ?? "cmd.exe";
+    const cmdLine = [cliPath, ...args.map(quoteIfNeeded)].join(" ");
+    return spawn(cmd, ["/d", "/c", cmdLine], {
+      cwd,
+      env,
+      windowsVerbatimArguments: true,
+    });
+  }
+  return spawn(cliPath, args, {
+    cwd,
+    shell: false,
+    windowsHide: true,
+    env,
+  });
+}
 
 export interface AntigravityCliLogger {
   debug?(context: Record<string, unknown>, message: string): void;
@@ -290,9 +322,14 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
   const timeoutMs = resolveTimeoutMs(input);
   const printTimeoutMinutes = Math.max(5, Math.ceil(timeoutMs / 60_000));
 
+  const systemAppend = execution?.systemPromptAppend ?? readString(options.systemPromptAppend);
+  const fullPrompt = systemAppend
+    ? `${input.prompt}\n\n[SYSTEM INSTRUCTIONS]:\n${systemAppend}`
+    : input.prompt;
+
   const args: string[] = [
     "-p",
-    input.prompt,
+    fullPrompt,
     "--model",
     model,
     "--output-format",
@@ -343,12 +380,7 @@ async function runCliAttempt(
   const tempLogFile = path.join(os.tmpdir(), `agy-${runId}.log`);
   const args = buildCliArgs(input, tempLogFile, runId);
 
-  const child = spawn(cliPath, args, {
-    cwd: input.cwd,
-    shell: false,
-    windowsHide: true,
-    env,
-  });
+  const child = spawnSubprocess(cliPath, args, input.cwd, env);
 
   const timeouts = withProcessTimeouts(child, {
     startTimeoutMs: execution?.startTimeoutMs,
@@ -472,11 +504,17 @@ async function runCliAttempt(
         state.plainTextFallback.trim() ||
         "Antigravity completed execution.";
 
+      const finalUsage: RuntimeUsage = state.usage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+      };
+
       resolve({
         result: {
           outputText: finalOutput,
           sessionId: state.sessionId,
-          usage: state.usage,
+          usage: finalUsage,
           events: state.events,
         },
         startTimedOut: false,
