@@ -340,6 +340,10 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
     args.push("--dangerously-skip-permissions");
   }
 
+  if (input.cwd) {
+    args.push("--add-dir", input.cwd);
+  }
+
   const effort = options.effort;
   if (effort) {
     args.push("--effort", String(effort));
@@ -431,15 +435,21 @@ async function runCliAttempt(
   child.stdin!.end();
 
   // Abort handling
-  if (execution?.abortController) {
-    execution.abortController.signal.addEventListener(
-      "abort",
-      () => {
-        if (child.pid) killProcessTree(child.pid);
-        else child.kill("SIGTERM");
-      },
-      { once: true },
-    );
+  const abortSignal = execution?.abortController?.signal ?? (input as any).abortSignal;
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      if (child.pid) killProcessTree(child.pid);
+      else child.kill("SIGTERM");
+    } else {
+      abortSignal.addEventListener(
+        "abort",
+        () => {
+          if (child.pid) killProcessTree(child.pid);
+          else child.kill("SIGTERM");
+        },
+        { once: true },
+      );
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -452,6 +462,17 @@ async function runCliAttempt(
     child.on("close", async (code) => {
       timeouts.cleanup();
       fs.unlink(tempLogFile, () => {});
+
+      if (abortSignal?.aborted) {
+        reject(
+          new AntigravityRuntimeAdapterError(
+            "Antigravity execution was aborted",
+            "ANTIGRAVITY_ABORTED",
+            "unknown",
+          ),
+        );
+        return;
+      }
 
       if (stdoutBuffer.length > 0) {
         try {
