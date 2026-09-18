@@ -11,15 +11,16 @@ describe("bootstrapRuntimeRegistry", () => {
     resetEnvCache();
   });
 
-  it("creates registry with built-in claude, codex, opencode, and openrouter adapters", async () => {
+  it("creates registry with built-in claude, codex, opencode, openrouter, and antigravity adapters", async () => {
     const registry = await bootstrapRuntimeRegistry();
     const runtimes = registry.listRuntimes();
 
-    expect(runtimes.length).toBeGreaterThanOrEqual(4);
+    expect(runtimes.length).toBeGreaterThanOrEqual(5);
     expect(runtimes.find((r) => r.id === "claude")).toBeDefined();
     expect(runtimes.find((r) => r.id === "codex")).toBeDefined();
     expect(runtimes.find((r) => r.id === "opencode")).toBeDefined();
     expect(runtimes.find((r) => r.id === "openrouter")).toBeDefined();
+    expect(runtimes.find((r) => r.id === "antigravity")).toBeDefined();
   });
 
   it("claude adapter has expected capabilities", async () => {
@@ -142,4 +143,22 @@ it("opencode adapter has expected capabilities", async () => {
   expect(opencode.descriptor.capabilities.supportsCustomEndpoint).toBe(true);
   expect(opencode.descriptor.defaultTransport).toBe("api");
   expect(opencode.descriptor.lightModel).toBeNull();
+});
+
+it("antigravity adapter has expected capabilities and MCP methods via tryResolveRuntime", async () => {
+  const registry = await bootstrapRuntimeRegistry();
+  const antigravity = registry.tryResolveRuntime("antigravity");
+
+  expect(antigravity).not.toBeNull();
+  expect(antigravity!.descriptor.id).toBe("antigravity");
+  expect(antigravity!.descriptor.providerId).toBe("google");
+  expect(antigravity!.descriptor.capabilities.supportsResume).toBe(true);
+  expect(antigravity!.descriptor.capabilities.supportsStreaming).toBe(true);
+  expect(antigravity!.descriptor.capabilities.supportsModelDiscovery).toBe(true);
+  expect(antigravity!.descriptor.capabilities.supportsNativeSubagentWorkflows).toBe(true);
+  expect(antigravity!.descriptor.capabilities.supportsSessionFork).toBe(false);
+  expect(antigravity!.descriptor.capabilities.usageReporting).toBe(UsageReporting.FULL);
+  expect(typeof antigravity!.getMcpStatus).toBe("function");
+  expect(typeof antigravity!.installMcpServer).toBe("function");
+  expect(typeof antigravity!.uninstallMcpServer).toBe("function");
 });

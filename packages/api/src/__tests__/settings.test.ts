@@ -392,6 +392,7 @@ describe("settings API — config routes", () => {
       expect(antigravityConfig.mcpServers.handoff).toEqual({
         command: "npx",
         args: ["tsx", join(tempRoot, "packages/mcp/src/index.ts")],
+        cwd: tempRoot,
         env: {
           DATABASE_URL: join(tempRoot, "data", "aif.sqlite"),
           LOG_DESTINATION: "stderr",

@@ -185,7 +185,7 @@ export async function discoverAntigravityModels(
   }
 
   try {
-    const timeoutMs = options.timeoutMs ?? 3_000;
+    const timeoutMs = options.timeoutMs ?? 10_000;
     const { stdout } = await execFileAsync(cliPath, ["models"], {
       timeout: timeoutMs,
       encoding: "utf8",

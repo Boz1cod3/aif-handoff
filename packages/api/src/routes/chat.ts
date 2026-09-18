@@ -81,7 +81,17 @@ const CHAT_ASKUSERQUESTION_HINT =
   "input. The user's next chat message is their answer and the session resumes with that answer in " +
   "history; never wait silently.";
 
-const NOISY_TOOL_NAMES = new Set(["Read", "Glob", "Grep", "LS", "NotebookRead"]);
+const NOISY_TOOL_NAMES = new Set([
+  "Read",
+  "Glob",
+  "Grep",
+  "LS",
+  "NotebookRead",
+  "view_file",
+  "list_dir",
+  "grep_search",
+  "find_by_name",
+]);
 
 type NormalizedQuestion = {
   question: string;
@@ -1538,7 +1548,11 @@ chatRouter.post("/", jsonValidator(chatRequestSchema), async (c) => {
           // not a provider-specific tool name.
           return;
         }
-        if (NOISY_TOOL_NAMES.has(toolName) || toolName.startsWith("mcp__handoff__")) {
+        if (
+          NOISY_TOOL_NAMES.has(toolName) ||
+          toolName.startsWith("mcp__handoff__") ||
+          toolName.startsWith("handoff_")
+        ) {
           log.debug(
             { tool: toolName, conversationId: chatConversationId },
             "[chat] tool:use suppressed (noisy)",

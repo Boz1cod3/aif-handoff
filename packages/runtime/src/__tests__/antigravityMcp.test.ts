@@ -71,6 +71,7 @@ describe("Antigravity MCP config", () => {
         handoff: {
           command: "npx",
           args: ["tsx", "packages/mcp/src/index.ts"],
+          cwd: "C:\\projects\\aif-handoff",
           env: {
             DATABASE_URL: "C:\\projects\\aif-handoff\\data\\aif.sqlite",
           },
@@ -93,6 +94,28 @@ describe("Antigravity MCP config", () => {
         "minimal-stdio": {
           command: "node",
           args: [],
+        },
+      },
+    });
+  });
+
+  it("writes stdio MCP server preserving cwd when provided", async () => {
+    await installAntigravityMcpServer({
+      serverName: "custom-cwd-stdio",
+      transport: "stdio",
+      command: "node",
+      args: ["run.js"],
+      cwd: "d:\\custom\\dir",
+    });
+
+    expect(writeFileMock).toHaveBeenCalledTimes(1);
+    const [, content] = writeFileMock.mock.calls[0] as [string, string];
+    expect(JSON.parse(content)).toEqual({
+      mcpServers: {
+        "custom-cwd-stdio": {
+          command: "node",
+          args: ["run.js"],
+          cwd: "d:\\custom\\dir",
         },
       },
     });

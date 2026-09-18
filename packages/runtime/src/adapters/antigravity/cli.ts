@@ -236,21 +236,47 @@ function processStreamJsonLine(
       su.tool_name ||
       su.tool_info
     ) {
+      // When tool execution completes (state === "DONE"), emit tool:result and do not
+      // re-emit tool:use to avoid duplicate tool logging in chat/agent activity streams.
+      if (su.state === "DONE" && (su.step_type === "tool" || su.step_type === "tool_call")) {
+        const toolInfo = asRecord(su.tool_info);
+        const toolName = String(su.tool_name ?? toolInfo.name ?? "unknown_tool");
+        const toolUseId =
+          typeof su.tool_id === "string"
+            ? su.tool_id
+            : typeof su.call_id === "string"
+              ? su.call_id
+              : su.step_index != null
+                ? `step-${su.step_index}`
+                : null;
+        const output = toolInfo.output ?? su.tool_output ?? su.result;
+        emitEvent(state, execution, {
+          type: "tool:result",
+          timestamp: nowIso,
+          level: "info",
+          message: summarizeToolInput(output),
+          data: { name: toolName, id: toolUseId, output },
+        });
+        return;
+      }
+
       const toolInfo = asRecord(su.tool_info);
-      const toolCalls = Array.isArray(su.tool_calls)
-        ? (su.tool_calls as Array<Record<string, unknown>>)
-        : su.tool_name || toolInfo.name
-          ? [
-              {
-                name: su.tool_name ?? toolInfo.name,
-                id:
-                  su.tool_id ??
-                  su.call_id ??
-                  (su.step_index != null ? `step-${su.step_index}` : null),
-                input: toolInfo.parameters ?? su.tool_input ?? su.arguments,
-              },
-            ]
-          : [];
+      const rawToolCalls = Array.isArray(su.tool_calls) ? su.tool_calls : [];
+      const toolCalls =
+        rawToolCalls.length > 0
+          ? rawToolCalls.map(asRecord)
+          : su.tool_name || toolInfo.name
+            ? [
+                {
+                  name: su.tool_name ?? toolInfo.name,
+                  id:
+                    su.tool_id ??
+                    su.call_id ??
+                    (su.step_index != null ? `step-${su.step_index}` : null),
+                  input: toolInfo.parameters ?? su.tool_input ?? su.arguments,
+                },
+              ]
+            : [];
 
       for (const tc of toolCalls) {
         const toolName = String(tc.name ?? tc.tool_name ?? "unknown_tool");

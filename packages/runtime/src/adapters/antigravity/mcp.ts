@@ -11,6 +11,7 @@ export function getAntigravityGlobalMcpConfigPath(): string {
 export interface AntigravityMcpServerConfig {
   command?: string;
   args?: string[];
+  cwd?: string;
   env?: Record<string, string>;
   serverUrl?: string;
   [key: string]: unknown;
@@ -54,11 +55,13 @@ export async function getAntigravityMcpStatus(
 ): Promise<RuntimeMcpStatus> {
   const config = await readMcpConfig(configPath);
   const servers = isRecord(config.mcpServers) ? config.mcpServers : {};
-  const installed = input.serverName in servers;
+  const serverEntry = servers[input.serverName];
+  const isValidConfig = isRecord(serverEntry);
+  const installed = input.serverName in servers && isValidConfig;
   return {
     installed,
     serverName: input.serverName,
-    config: installed ? (servers[input.serverName] as Record<string, unknown>) : null,
+    config: installed && isRecord(serverEntry) ? (serverEntry as Record<string, unknown>) : null,
   };
 }
 
@@ -79,6 +82,7 @@ export async function installAntigravityMcpServer(
     config.mcpServers[input.serverName] = {
       command: input.command,
       args: input.args ?? [],
+      ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.env && Object.keys(input.env).length > 0 ? { env: input.env } : {}),
     };
   }
