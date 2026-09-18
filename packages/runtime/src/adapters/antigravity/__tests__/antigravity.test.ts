@@ -8,9 +8,15 @@ import {
   clearDiscoveredModelsCache,
 } from "../models.js";
 import * as findPathModule from "../findPath.js";
+import * as mcpModule from "../mcp.js";
 import { classifyAntigravityRuntimeError } from "../errors.js";
 import { bootstrapRuntimeRegistry } from "../../../bootstrap.js";
-import { UsageReporting, RuntimeTransport } from "../../../types.js";
+import {
+  UsageReporting,
+  RuntimeTransport,
+  type RuntimeMcpInput,
+  type RuntimeMcpInstallInput,
+} from "../../../types.js";
 
 describe("Antigravity Runtime Adapter", () => {
   describe("Descriptor and capabilities", () => {
@@ -223,6 +229,61 @@ describe("Antigravity Runtime Adapter", () => {
         forceRefresh: true,
       });
       expect(models.length).toBe(14);
+    });
+  });
+
+  describe("MCP management", () => {
+    const adapter = createAntigravityRuntimeAdapter();
+
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("exposes MCP management methods", () => {
+      expect(typeof adapter.getMcpStatus).toBe("function");
+      expect(typeof adapter.installMcpServer).toBe("function");
+      expect(typeof adapter.uninstallMcpServer).toBe("function");
+    });
+
+    it("delegates getMcpStatus to getAntigravityMcpStatus", async () => {
+      const spy = vi.spyOn(mcpModule, "getAntigravityMcpStatus").mockResolvedValueOnce({
+        installed: true,
+        serverName: "test-server",
+        config: null,
+      });
+
+      const result = await adapter.getMcpStatus!({ serverName: "test-server" });
+
+      expect(spy).toHaveBeenCalledWith({ serverName: "test-server" });
+      expect(result).toEqual({
+        installed: true,
+        serverName: "test-server",
+        config: null,
+      });
+    });
+
+    it("delegates installMcpServer to installAntigravityMcpServer", async () => {
+      const spy = vi.spyOn(mcpModule, "installAntigravityMcpServer").mockResolvedValueOnce();
+
+      const input: RuntimeMcpInstallInput = {
+        serverName: "test-server",
+        command: "node",
+        args: ["server.js"],
+      };
+
+      await adapter.installMcpServer!(input);
+
+      expect(spy).toHaveBeenCalledWith(input);
+    });
+
+    it("delegates uninstallMcpServer to uninstallAntigravityMcpServer", async () => {
+      const spy = vi.spyOn(mcpModule, "uninstallAntigravityMcpServer").mockResolvedValueOnce();
+
+      const input: RuntimeMcpInput = { serverName: "test-server" };
+
+      await adapter.uninstallMcpServer!(input);
+
+      expect(spy).toHaveBeenCalledWith(input);
     });
   });
 });

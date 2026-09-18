@@ -19,6 +19,11 @@ import {
   LIGHT_ANTIGRAVITY_MODEL,
   discoverAntigravityModels,
 } from "./models.js";
+import {
+  getAntigravityMcpStatus,
+  installAntigravityMcpServer,
+  uninstallAntigravityMcpServer,
+} from "./mcp.js";
 
 export type AntigravityRuntimeAdapterLogger = AntigravityCliLogger;
 
@@ -154,6 +159,18 @@ export function createAntigravityRuntimeAdapter(
         .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
         .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "")
         .trim();
+    },
+
+    async getMcpStatus(input) {
+      return getAntigravityMcpStatus(input);
+    },
+
+    async installMcpServer(input) {
+      return installAntigravityMcpServer(input);
+    },
+
+    async uninstallMcpServer(input) {
+      return uninstallAntigravityMcpServer(input);
     },
   };
 }
