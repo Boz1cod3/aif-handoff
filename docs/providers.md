@@ -59,13 +59,14 @@ The API exposes effective selection endpoints:
 
 ## Supported Runtimes
 
-| Runtime      | Provider     | Transports                | Resume                   | Session Fork     | Sessions             | Agent Defs    | Native Subagents | Isolated Fallback | Usage Reporting                          | Light Model         | Status                    |
-| ------------ | ------------ | ------------------------- | ------------------------ | ---------------- | -------------------- | ------------- | ---------------- | ----------------- | ---------------------------------------- | ------------------- | ------------------------- |
-| `claude`     | `anthropic`  | SDK, CLI, API             | Yes (SDK/CLI)            | Yes (SDK/CLI)    | Yes (SDK/CLI)        | Yes (SDK/CLI) | No               | No                | `FULL` (all transports)                  | `claude-haiku-3-5`  | Built-in                  |
-| `codex`      | `openai`     | SDK, CLI, App Server, API | Yes (SDK/CLI/App Server) | Yes (App Server) | Yes (SDK/App Server) | No            | SDK only         | SDK only          | `FULL` SDK/API, `PARTIAL` CLI/App Server | default             | Built-in                  |
-| `opencode`   | `opencode`   | API                       | Yes                      | No               | Yes                  | No            | No               | No                | `NONE`                                   | null (configurable) | Built-in                  |
-| `openrouter` | `openrouter` | API                       | No                       | No               | No                   | No            | No               | No                | `FULL`                                   | null (configurable) | Built-in                  |
-| Custom       | Any          | Any                       | Configurable             | Configurable     | Configurable         | Configurable  | Configurable     | Configurable      | Must declare                             | Configurable        | Via `AIF_RUNTIME_MODULES` |
+| Runtime       | Provider     | Transports                | Resume                   | Session Fork     | Sessions             | Agent Defs    | Native Subagents   | Isolated Fallback | Usage Reporting                          | Light Model             | Status                    |
+| ------------- | ------------ | ------------------------- | ------------------------ | ---------------- | -------------------- | ------------- | ------------------ | ----------------- | ---------------------------------------- | ----------------------- | ------------------------- |
+| `claude`      | `anthropic`  | SDK, CLI, API             | Yes (SDK/CLI)            | Yes (SDK/CLI)    | Yes (SDK/CLI)        | Yes (SDK/CLI) | No                 | No                | `FULL` (all transports)                  | `claude-haiku-3-5`      | Built-in                  |
+| `codex`       | `openai`     | SDK, CLI, App Server, API | Yes (SDK/CLI/App Server) | Yes (App Server) | Yes (SDK/App Server) | No            | SDK only           | SDK only          | `FULL` SDK/API, `PARTIAL` CLI/App Server | default                 | Built-in                  |
+| `antigravity` | `google`     | CLI                       | Yes                      | No               | No                   | No            | Yes (10 subagents) | No                | `FULL`                                   | `gemini-3.8-flash-fast` | Built-in                  |
+| `opencode`    | `opencode`   | API                       | Yes                      | No               | Yes                  | No            | No                 | No                | `NONE`                                   | null (configurable)     | Built-in                  |
+| `openrouter`  | `openrouter` | API                       | No                       | No               | No                   | No            | No                 | No                | `FULL`                                   | null (configurable)     | Built-in                  |
+| Custom        | Any          | Any                       | Configurable             | Configurable     | Configurable         | Configurable  | Configurable       | Configurable      | Must declare                             | Configurable            | Via `AIF_RUNTIME_MODULES` |
 
 Capabilities are **transport-aware**: the same adapter may expose different capabilities depending on the selected transport. For example, Codex supports resume on SDK/CLI/App Server, session fork only on App Server, and session discovery on SDK/App Server. Use `resolveAdapterCapabilities(adapter, transport)` to get the effective set.
 
@@ -357,6 +358,30 @@ App Server operational notes:
   "enabled": true
 }
 ```
+
+### Google Antigravity (CLI transport)
+
+Spawns Google's `agy.exe` (or `agy` binary) as an autonomous agent subprocess with streaming NDJSON output (`--output-format stream-json`). Supports 14 Gemini models with dynamic discovery, context continuation via `--conversation <sessionId>`, and automatic project scaffolding (`supportsProjectInit: true`).
+
+```json
+{
+  "projectId": null,
+  "name": "Google Antigravity (Flash High)",
+  "runtimeId": "antigravity",
+  "providerId": "google",
+  "transport": "cli",
+  "defaultModel": "gemini-3.8-flash-high",
+  "enabled": true
+}
+```
+
+CLI-specific options:
+
+- `antigravityCliPath` — override for the `agy` executable path (default: auto-detected in `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows or `PATH`)
+- `ANTIGRAVITY_BIN_PATH` env var — same, configured via environment
+- `effort` — optional reasoning effort string (`low`, `medium`, `high`)
+- `systemPromptAppend` — extra system instructions appended to the task execution prompt
+- `supportsProjectInit` — enables automated project scaffolding via `ai-factory init --agents antigravity`
 
 ### Codex OAuth login in Docker (broker)
 

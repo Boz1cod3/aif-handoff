@@ -75,6 +75,8 @@ export function createAntigravityRuntimeAdapter(
       id: runtimeId,
       providerId,
       displayName: options.displayName ?? "Google Antigravity",
+      supportsProjectInit: true,
+      projectInitAgentName: "antigravity",
       lightModel: LIGHT_ANTIGRAVITY_MODEL,
       defaultModelPlaceholder: DEFAULT_ANTIGRAVITY_MODEL,
       defaultTransport: RuntimeTransport.CLI,

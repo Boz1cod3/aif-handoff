@@ -51,7 +51,7 @@
     "*.{ts,tsx,js,jsx,json,md,css}": "prettier --write"
   },
   "dependencies": {
-    "ai-factory": "^2.11.0"
+    "ai-factory": "file:../ai-factory_antigravity"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^9.6.1",
