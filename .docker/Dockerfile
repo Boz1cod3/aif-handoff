@@ -88,8 +88,8 @@ EXPOSE 3009
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["npx", "tsx", "packages/api/src/index.ts"]
 
-# ---- Web (Angie reverse proxy + static) ----
-FROM docker.angie.software/angie:1.11.4-alpine AS web
+# ---- Web (Nginx reverse proxy + static) ----
+FROM nginx:alpine AS web
 # Proxy (optional) — separate ARGs because this stage does NOT inherit from `base`.
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
@@ -104,9 +104,8 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     all_proxy=${ALL_PROXY} \
     no_proxy=${NO_PROXY}
 RUN apk add --no-cache gettext
-COPY --from=build /app/packages/web/dist /usr/share/angie/html
-COPY .docker/angie.conf /etc/angie/http.d/default.conf
-COPY .docker/angie.production.conf /etc/angie/http.d/production.conf.template
+COPY --from=build /app/packages/web/dist /usr/share/nginx/html
+COPY .docker/angie.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80 443
 
 # ---- Agent ----

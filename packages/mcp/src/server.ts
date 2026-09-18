@@ -121,11 +121,14 @@ export function createMcpHttpHandler(env: McpEnv, context: ToolContext) {
     }
 
     if (url.pathname === "/mcp") {
-      const token = bearerToken(
-        Array.isArray(req.headers.authorization)
-          ? req.headers.authorization[0]
-          : req.headers.authorization,
-      );
+      const token =
+        bearerToken(
+          Array.isArray(req.headers.authorization)
+            ? req.headers.authorization[0]
+            : req.headers.authorization,
+        ) ??
+        url.searchParams.get("token") ??
+        url.searchParams.get("authToken");
       if (!env.authToken || !tokensMatch(token, env.authToken)) {
         log.warn(
           { method: req.method, path: url.pathname },

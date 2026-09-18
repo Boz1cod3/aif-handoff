@@ -123,6 +123,27 @@ describe("MCP HTTP transport — multi-session (opt-in)", () => {
     expect(await response.json()).toMatchObject({ code: "mcp_authentication_required" });
   });
 
+  it("accepts a token supplied via query parameter token or authToken", async () => {
+    const res = await fetch(`http://localhost:${port}/mcp?token=${env.authToken}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0.0" },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+  });
+
   it("lets two independent clients initialize without -32600", async () => {
     // The core regression: with a single shared stateful transport the second
     // initialize returned -32600 "Server already initialized". Stateless

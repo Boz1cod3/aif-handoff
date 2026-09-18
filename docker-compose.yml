@@ -94,8 +94,10 @@ services:
     env_file: .env
     environment:
       - DATABASE_URL=/data/aif.sqlite
+      - API_BASE_URL=http://api:3009
       - MCP_TRANSPORT=http
       - MCP_PORT=3100
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-}
       - PROJECTS_DIR=${PROJECTS_DIR:-${PWD}/projects}
       - PROJECTS_HOST_ROOT=${PWD}
       - PROJECTS_MOUNT=${PROJECTS_MOUNT:-/home/www}
@@ -108,5 +110,6 @@ services:
 
 volumes:
   db-data:
+    name: aif_handoff_db_data
   claude-auth:
   codex-auth:
