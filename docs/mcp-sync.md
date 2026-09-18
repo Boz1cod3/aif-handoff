@@ -75,7 +75,61 @@ By default the HTTP transport runs in **single-session** mode: one shared server
 
 Set `AIF_MCP_HTTP_MULTI_SESSION_ENABLED=true` to opt into **stateless multi-session** mode. Each request then gets its own short-lived server/transport with no shared session, so multiple clients (several Claude Code windows, or remote clients) can connect to the same `/mcp` endpoint concurrently and every `initialize` succeeds independently. The flag defaults to off so enabling concurrent clients is an intentional rollout rather than an unconditional transport change. The stateless path is `POST`-only: an optional `GET /mcp` SSE stream is answered with `405` (the SDK treats this as "server does not offer SSE"), because server→client events (task updates) are delivered out-of-band via the API broadcast endpoint, not through the MCP transport.
 
-When the web settings UI calls `POST /settings/mcp/install`, the API installs this HTTP URL form automatically whenever `MCP_PORT` is a valid integer port. If `MCP_PORT` is missing or invalid, it falls back to the local `stdio`/`npx tsx packages/mcp/src/index.ts` entry. Direct MCP HTTP startup (`packages/mcp`) is stricter: invalid `MCP_PORT` values fail fast during startup instead of silently coercing the port.
+When the web settings UI calls `POST /settings/mcp/install`, the API installs this HTTP URL form automatically whenever `MCP_PORT` is a valid integer port (using `url` for Claude Code and `serverUrl` for Google Antigravity). If `MCP_PORT` is missing or invalid, it falls back to the local `stdio`/`npx tsx packages/mcp/src/index.ts` entry. Direct MCP HTTP startup (`packages/mcp`) is stricter: invalid `MCP_PORT` values fail fast during startup instead of silently coercing the port.
+
+#### Google Antigravity
+
+Google Antigravity 2.0 discovers MCP servers from configuration files:
+
+- **Global configuration:** `~/.gemini/config/mcp_config.json`
+  - Windows: `%USERPROFILE%\.gemini\config\mcp_config.json`
+  - Linux / macOS: `$HOME/.gemini/config/mcp_config.json`
+- **Project-level configuration:** `.agents/mcp_config.json` (at the project root)
+
+##### Schema
+
+Unlike standard Claude Code configuration which uses `"url"` for HTTP endpoints, Antigravity 2.0 expects `"serverUrl"` for Streamable HTTP/SSE transport. For stdio transport, it accepts standard `command`, `args`, and `env` properties.
+
+**HTTP transport:**
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "serverUrl": "http://localhost:3100/mcp"
+    }
+  }
+}
+```
+
+**stdio transport:**
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "npx",
+      "args": ["tsx", "packages/mcp/src/index.ts"],
+      "cwd": "/absolute/path/to/aif-handoff",
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "DATABASE_URL": "/absolute/path/to/aif-handoff/data/aif.sqlite",
+        "PROJECTS_DIR": "/absolute/path/to/aif-handoff/.projects",
+        "LOG_LEVEL": "info",
+        "LOG_DESTINATION": "stderr"
+      }
+    }
+  }
+}
+```
+
+##### Automatic Installation via Settings API
+
+Calling `POST /settings/mcp/install` (or clicking "Install MCP Server" in the Web UI settings) automatically installs the Handoff MCP server into Antigravity's global configuration file (`~/.gemini/config/mcp_config.json`), alongside Claude Code (`.mcp.json`) and other registered runtimes.
+
+- When `MCP_PORT` is configured, it writes the HTTP configuration using `"serverUrl"`.
+- If `MCP_PORT` is unset or invalid, it writes the `stdio` transport parameters.
+- Calling `DELETE /settings/mcp` uninstalls the server from Antigravity's configuration.
 
 ### Environment Variables
 
