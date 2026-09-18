@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resetEnvCache } from "@aif/shared";
@@ -324,6 +324,7 @@ describe("settings API — config routes", () => {
   describe("MCP routes", () => {
     const claudeConfigPath = join(fakeHome, ".claude.json");
     const codexConfigPath = join(fakeHome, ".codex", "config.toml");
+    const antigravityConfigPath = join(fakeHome, ".gemini", "config", "mcp_config.json");
 
     beforeEach(() => {
       delete process.env.MCP_PORT;
@@ -334,6 +335,11 @@ describe("settings API — config routes", () => {
       }
       try {
         rmSync(join(fakeHome, ".codex"), { recursive: true, force: true });
+      } catch {
+        /* ok */
+      }
+      try {
+        rmSync(join(fakeHome, ".gemini"), { recursive: true, force: true });
       } catch {
         /* ok */
       }
@@ -381,6 +387,19 @@ describe("settings API — config routes", () => {
       expect(codexToml).toContain("[mcp_servers.handoff]");
       expect(codexToml).toContain('command = "npx"');
       expect(codexToml).not.toContain('url = "http://localhost:3100/mcp"');
+
+      const antigravityConfig = JSON.parse(readFileSync(antigravityConfigPath, "utf-8"));
+      expect(antigravityConfig.mcpServers.handoff).toEqual({
+        command: "npx",
+        args: ["tsx", join(tempRoot, "packages/mcp/src/index.ts")],
+        env: {
+          DATABASE_URL: join(tempRoot, "data", "aif.sqlite"),
+          LOG_DESTINATION: "stderr",
+          LOG_LEVEL: "info",
+          MCP_TRANSPORT: "stdio",
+          PROJECTS_DIR: join(tempRoot, ".projects"),
+        },
+      });
     });
 
     it("POST /settings/mcp/install adds handoff HTTP server when MCP_PORT is set", async () => {
@@ -406,6 +425,11 @@ describe("settings API — config routes", () => {
       expect(codexToml).toContain("[mcp_servers.handoff]");
       expect(codexToml).toContain('url = "http://localhost:3100/mcp"');
       expect(codexToml).not.toContain('command = "npx"');
+
+      const antigravityConfig = JSON.parse(readFileSync(antigravityConfigPath, "utf-8"));
+      expect(antigravityConfig.mcpServers.handoff).toEqual({
+        serverUrl: "http://localhost:3100/mcp",
+      });
     });
 
     it("POST /settings/mcp/install falls back to stdio when MCP_PORT is invalid", async () => {
@@ -485,12 +509,20 @@ describe("settings API — config routes", () => {
         claudeConfigPath,
         JSON.stringify({ mcpServers: { handoff: { command: "test" } } }),
       );
+      mkdirSync(join(fakeHome, ".gemini", "config"), { recursive: true });
+      writeFileSync(
+        antigravityConfigPath,
+        JSON.stringify({ mcpServers: { handoff: { command: "test" } } }),
+      );
       const res = await app.request("/settings/mcp", { method: "DELETE" });
       expect(res.status).toBe(200);
 
       const checkRes = await app.request("/settings/mcp");
       const checkBody = await checkRes.json();
       expect(checkBody.installed).toBe(false);
+
+      const antigravityConfig = JSON.parse(readFileSync(antigravityConfigPath, "utf-8"));
+      expect(antigravityConfig.mcpServers.handoff).toBeUndefined();
     });
 
     it("DELETE /settings/mcp removes handoff HTTP server", async () => {
