@@ -231,10 +231,12 @@ describe("first participant administrator bootstrap", () => {
     chmodSync(passwordFile, 0o600);
     expect(readProtectedPasswordFile(passwordFile)).toBe("protected bootstrap password\n");
 
-    chmodSync(passwordFile, 0o644);
-    expect(() => readProtectedPasswordFile(passwordFile)).toThrow(
-      "must not be accessible by group or other users",
-    );
+    if (process.platform !== "win32") {
+      chmodSync(passwordFile, 0o644);
+      expect(() => readProtectedPasswordFile(passwordFile)).toThrow(
+        "must not be accessible by group or other users",
+      );
+    }
     expect(() => readProtectedPasswordFile(directory)).toThrow("must be a regular file");
   });
 });

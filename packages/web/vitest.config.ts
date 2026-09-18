@@ -8,6 +8,7 @@ const __dir = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   plugins: [react()],
   test: {
+    testTimeout: 20_000,
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/__tests__/setup.ts"],

@@ -787,7 +787,7 @@ describe("projects API", () => {
     });
 
     it("creates a project from the canonical GitHub repository without exposing credentials", async () => {
-      const managedRoot = mkdtempSync("/tmp/aif-github-create-");
+      const managedRoot = mkdtempSync(join(tmpdir(), "aif-github-create-"));
       vi.stubEnv("PROJECTS_MOUNT", managedRoot);
       const fetchMock = vi.fn().mockResolvedValue(githubRepositoryResponse());
       vi.stubGlobal("fetch", fetchMock);

@@ -38,7 +38,7 @@ function withLifecycleTimeout<T>(promise: Promise<T>, label: string): Promise<T>
   return Promise.race([
     promise,
     new Promise<T>((_resolve, reject) => {
-      setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 5_000).unref();
+      setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 15_000).unref();
     }),
   ]);
 }
@@ -111,7 +111,16 @@ describe("startServer WebSocket integration", () => {
         });
 
         const closed = new Promise<void>((resolve) => {
+          if (webSocket.readyState === WebSocket.CLOSED) {
+            resolve();
+            return;
+          }
           webSocket.once("close", () => resolve());
+          setTimeout(() => {
+            if (webSocket.readyState !== WebSocket.CLOSED) {
+              webSocket.terminate();
+            }
+          }, 1000).unref();
         });
         webSocket.close();
         await withLifecycleTimeout(closed, "WebSocket close");

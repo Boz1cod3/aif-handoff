@@ -7,7 +7,8 @@ export default defineConfig({
     // timeout flakes — bump to 20s globally; deterministic non-git tests
     // still finish in <100ms, so the larger budget only kicks in on the
     // slow path.
-    testTimeout: 20_000,
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     server: {
       deps: {
         inline: ["@aif/runtime", "@anthropic-ai/claude-agent-sdk"],

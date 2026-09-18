@@ -177,7 +177,7 @@ function processStreamJsonLine(
   line: string,
   state: StreamState,
   input: RuntimeRunInput,
-  logger?: AntigravityCliLogger,
+  _logger?: AntigravityCliLogger,
 ): void {
   const execution = input.execution;
   const trimmed = line.trim();

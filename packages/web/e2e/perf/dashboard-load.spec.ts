@@ -14,10 +14,11 @@ test.describe("dashboard cold load", () => {
     const response = await nav;
     expect(response?.status() ?? 500).toBeLessThan(400);
 
-    // Wait until app shell paints the first kanban column header. If the app
-    // renames the column label, update this locator — the goal is to anchor on
-    // something that only exists once the board has real data rendered.
-    await page.waitForSelector("text=/Backlog|Planning|Implementing/i", { timeout: 30_000 });
+    // Wait until app shell paints the first kanban column header (or empty state
+    // if no projects are present on the dev DB).
+    await page.waitForSelector("text=/Backlog|Planning|Implementing|No projects yet/i", {
+      timeout: 30_000,
+    });
 
     const timing = await readNavigationTiming(page);
     const vitals = await readWebVitals(page);

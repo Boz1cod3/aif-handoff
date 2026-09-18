@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { resolve, join } from "node:path";
+import { resolve } from "node:path";
 import { assertSafeWindowsShellExecutablePath } from "../../shellSafety.js";
 
 const IS_WINDOWS = process.platform === "win32";
