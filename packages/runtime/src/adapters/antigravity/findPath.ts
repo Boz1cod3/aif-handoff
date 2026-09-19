@@ -75,15 +75,15 @@ export function probeAntigravityCli(cliPath: string): {
   error?: string;
 } {
   try {
+    const lower = cliPath.toLowerCase();
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
+      return {
+        ok: false,
+        error: `Executing Antigravity via batch script (${cliPath}) is prohibited. Point directly to agy.exe.`,
+      };
+    }
     if (IS_WINDOWS) {
       assertSafeWindowsShellExecutablePath(cliPath, "Antigravity CLI path");
-      const lower = cliPath.toLowerCase();
-      if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-        return {
-          ok: false,
-          error: `Executing Antigravity via batch script (${cliPath}) is prohibited. Point directly to agy.exe.`,
-        };
-      }
     }
     const out = execFileSync(cliPath, ["--version"], {
       timeout: 5_000,
