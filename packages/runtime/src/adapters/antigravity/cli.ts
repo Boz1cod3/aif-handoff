@@ -337,6 +337,13 @@ function processStreamJsonLine(
   }
 }
 
+function composeFullPrompt(input: RuntimeRunInput): string {
+  const options = asRecord(input.options);
+  const execution = input.execution;
+  const systemAppend = execution?.systemPromptAppend ?? readString(options.systemPromptAppend);
+  return systemAppend ? `${input.prompt}\n\n[SYSTEM INSTRUCTIONS]:\n${systemAppend}` : input.prompt;
+}
+
 function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string): string[] {
   const options = asRecord(input.options);
   const execution = input.execution;
@@ -345,14 +352,7 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
   const timeoutMs = resolveTimeoutMs(input);
   const printTimeoutMinutes = Math.max(5, Math.ceil(timeoutMs / 60_000));
 
-  const systemAppend = execution?.systemPromptAppend ?? readString(options.systemPromptAppend);
-  const fullPrompt = systemAppend
-    ? `${input.prompt}\n\n[SYSTEM INSTRUCTIONS]:\n${systemAppend}`
-    : input.prompt;
-
   const args: string[] = [
-    "-p",
-    fullPrompt,
     "--model",
     model,
     "--output-format",
@@ -405,6 +405,7 @@ async function runCliAttempt(
   const execution = input.execution;
   const runId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const tempLogFile = path.join(os.tmpdir(), `agy-${runId}.log`);
+  const fullPrompt = composeFullPrompt(input);
   const args = buildCliArgs(input, tempLogFile, runId);
 
   const child = spawnSubprocess(cliPath, args, input.cwd, env);
@@ -467,10 +468,13 @@ async function runCliAttempt(
     execution?.onStderr?.(text);
   });
 
-  // Close stdin so child process does not wait on interactive console input
+  // Deliver prompt via stdin and close so child process does not wait on interactive console input
   child.stdin!.on("error", () => {
     /* ignore broken-pipe */
   });
+  if (fullPrompt) {
+    child.stdin!.write(fullPrompt);
+  }
   child.stdin!.end();
 
   // Abort handling

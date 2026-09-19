@@ -269,4 +269,34 @@ describe("Antigravity CLI Runner", () => {
     ]);
     await runPromise;
   });
+
+  it("delivers prompt via child.stdin.write instead of CLI argument", async () => {
+    const { spawn } = await import("node:child_process");
+    const input = createInput({
+      prompt: "Execute long prompt instruction",
+      execution: {
+        systemPromptAppend: "System appended rules",
+      },
+    });
+
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    const spawnCalls = vi.mocked(spawn).mock.calls;
+    const lastCall = spawnCalls[spawnCalls.length - 1];
+    const args = lastCall[1] as string[];
+
+    expect(args).not.toContain("-p");
+    expect(args).not.toContain("--prompt");
+    expect(mockChild.stdin.write).toHaveBeenCalledWith(
+      "Execute long prompt instruction\n\n[SYSTEM INSTRUCTIONS]:\nSystem appended rules",
+    );
+    expect(mockChild.stdin.end).toHaveBeenCalled();
+
+    simulateStreamAndClose(0, [
+      { event: "result", result: { status: "SUCCESS", response: "Done" } },
+    ]);
+    await runPromise;
+  });
 });
