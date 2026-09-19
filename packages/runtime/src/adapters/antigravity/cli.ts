@@ -1,4 +1,4 @@
-import { spawn, exec } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -40,6 +40,7 @@ function spawnSubprocess(
     shell: false,
     windowsHide: true,
     env,
+    detached: !IS_WINDOWS,
   });
 }
 
@@ -116,7 +117,10 @@ function resolveTimeoutMs(input: RuntimeRunInput): number {
 function killProcessTree(pid: number): void {
   if (IS_WINDOWS) {
     try {
-      exec(`taskkill /PID ${pid} /T /F`, () => {});
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
     } catch {
       // ignore
     }
@@ -388,7 +392,7 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
 }
 
 interface CliAttemptResult {
-  result: RuntimeRunResult;
+  result: RuntimeRunResult | null;
   startTimedOut: boolean;
 }
 
@@ -404,6 +408,12 @@ async function runCliAttempt(
   const args = buildCliArgs(input, tempLogFile, runId);
 
   const child = spawnSubprocess(cliPath, args, input.cwd, env);
+
+  const rawKill = child.kill.bind(child);
+  child.kill = ((signal?: NodeJS.Signals | number) => {
+    if (child.pid) killProcessTree(child.pid);
+    return IS_WINDOWS ? true : rawKill(signal as any);
+  }) as any;
 
   const timeouts = withProcessTimeouts(child, {
     startTimeoutMs: execution?.startTimeoutMs,
@@ -528,7 +538,7 @@ async function runCliAttempt(
           { runtimeId: input.runtimeId, startTimeoutMs: startMs },
           "Antigravity CLI start timeout — process produced no output",
         );
-        resolve({ result: null as unknown as RuntimeRunResult, startTimedOut: true });
+        resolve({ result: null, startTimedOut: true });
         return;
       }
 
@@ -591,7 +601,7 @@ export async function runAntigravityCli(
 
   const { result, startTimedOut } = await runCliAttempt(input, cliPath, env, logger);
 
-  if (startTimedOut) {
+  if (startTimedOut || !result) {
     const retryDelayMs = resolveRetryDelay(execution ?? {});
     logger?.warn?.(
       { runtimeId: input.runtimeId, retryDelayMs },
@@ -600,7 +610,7 @@ export async function runAntigravityCli(
     await sleepMs(retryDelayMs);
 
     const retry = await runCliAttempt(input, cliPath, env, logger);
-    if (retry.startTimedOut) {
+    if (retry.startTimedOut || !retry.result) {
       throw makeProcessStartTimeoutError(execution?.startTimeoutMs ?? 0);
     }
     return retry.result;

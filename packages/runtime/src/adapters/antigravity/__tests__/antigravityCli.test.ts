@@ -2,14 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeEvent, RuntimeRunInput } from "../../../types.js";
 import { TEST_USAGE_CONTEXT } from "../../../__tests__/helpers/usageContext.js";
 
-const { mockStdout, mockStderr, _mockStdin, mockChild } = vi.hoisted(() => {
+const { mockStdout, mockStderr, _mockStdin, mockChild, mockSpawnSync } = vi.hoisted(() => {
   const stdout = { on: vi.fn() };
   const stderr = { on: vi.fn() };
   const stdin = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+  const spawnSync = vi.fn();
   return {
     mockStdout: stdout,
     mockStderr: stderr,
     _mockStdin: stdin,
+    mockSpawnSync: spawnSync,
     mockChild: {
       pid: 1234,
       stdout,
@@ -26,6 +28,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   return {
     ...actual,
     spawn: vi.fn().mockReturnValue(mockChild),
+    spawnSync: mockSpawnSync,
     exec: vi.fn(),
   };
 });
@@ -221,5 +224,49 @@ describe("Antigravity CLI Runner", () => {
     const result = await runPromise;
     expect(result.outputText).toBe("Привіт усім!");
     expect(result.outputText).not.toContain("\uFFFD");
+  });
+
+  it("spawns process with detached: !IS_WINDOWS", async () => {
+    const { spawn } = await import("node:child_process");
+    const input = createInput();
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    simulateStreamAndClose(0, [
+      { event: "result", result: { status: "SUCCESS", response: "Done" } },
+    ]);
+    await runPromise;
+
+    expect(spawn).toHaveBeenCalledWith(
+      "agy.exe",
+      expect.any(Array),
+      expect.objectContaining({
+        detached: process.platform !== "win32",
+      }),
+    );
+  });
+
+  it("intercepts child.kill to terminate process tree via taskkill on Windows", async () => {
+    const input = createInput();
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    // Call the wrapped child.kill
+    mockChild.kill("SIGTERM");
+
+    if (process.platform === "win32") {
+      expect(mockSpawnSync).toHaveBeenCalledWith(
+        "taskkill",
+        ["/PID", "1234", "/T", "/F"],
+        expect.objectContaining({ windowsHide: true, stdio: "ignore" }),
+      );
+    }
+
+    simulateStreamAndClose(0, [
+      { event: "result", result: { status: "SUCCESS", response: "Terminated" } },
+    ]);
+    await runPromise;
   });
 });
