@@ -1,4 +1,5 @@
 import { spawn, exec } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -410,6 +411,8 @@ async function runCliAttempt(
   });
 
   const state = createStreamState(input.sessionId ?? null);
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
   let stdoutBuffer = "";
   let stderr = "";
   let streamProcessingError: unknown = null;
@@ -434,7 +437,7 @@ async function runCliAttempt(
   };
 
   child.stdout!.on("data", (chunk: Buffer | string) => {
-    stdoutBuffer += String(chunk);
+    stdoutBuffer += typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk);
     try {
       flushCompleteLines();
     } catch (err) {
@@ -449,7 +452,7 @@ async function runCliAttempt(
   });
 
   child.stderr!.on("data", (chunk: Buffer | string) => {
-    const text = String(chunk);
+    const text = typeof chunk === "string" ? chunk : stderrDecoder.write(chunk);
     stderr += text;
     execution?.onStderr?.(text);
   });
@@ -488,6 +491,9 @@ async function runCliAttempt(
     child.on("close", async (code) => {
       timeouts.cleanup();
       fs.unlink(tempLogFile, () => {});
+
+      stdoutBuffer += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
 
       if (abortSignal?.aborted) {
         reject(

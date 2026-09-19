@@ -185,4 +185,41 @@ describe("Antigravity CLI Runner", () => {
     expect(textEvents).toHaveLength(1);
     expect(textEvents[0].message).toBe("The command printed: hello\n");
   });
+
+  it("decodes multi-byte UTF-8 stream output across split chunk boundaries without corruption", async () => {
+    const input = createInput();
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "C:\\Users\\wait\\AppData\\Local\\agy\\bin\\agy.exe",
+    });
+
+    const stdoutHandler = mockStdout.on.mock.calls.find((c: unknown[]) => c[0] === "data")?.[1] as
+      | ((chunk: Buffer | string) => void)
+      | undefined;
+    const closeHandler = mockChild.on.mock.calls.find((c: unknown[]) => c[0] === "close")?.[1] as
+      | ((code: number) => void)
+      | undefined;
+
+    const fullJson =
+      JSON.stringify({
+        event: "result",
+        result: {
+          status: "SUCCESS",
+          response: "Привіт усім!",
+        },
+      }) + "\n";
+
+    const buf = Buffer.from(fullJson, "utf8");
+    // Find index of multi-byte char to split right in the middle of a 2-byte UTF-8 sequence
+    const splitIndex = buf.indexOf(Buffer.from("Привіт", "utf8")) + 1; // splits 'П' between 0xd0 and 0x9f
+    const chunk1 = buf.subarray(0, splitIndex);
+    const chunk2 = buf.subarray(splitIndex);
+
+    stdoutHandler?.(chunk1);
+    stdoutHandler?.(chunk2);
+    closeHandler?.(0);
+
+    const result = await runPromise;
+    expect(result.outputText).toBe("Привіт усім!");
+    expect(result.outputText).not.toContain("\uFFFD");
+  });
 });
