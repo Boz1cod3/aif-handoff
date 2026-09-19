@@ -426,7 +426,15 @@ async function runCliAttempt(
       killed = true;
       if (child.pid && child.pid > 0) killProcessTree(child.pid);
     }
-    return IS_WINDOWS ? true : rawKill(signal as any);
+    if (IS_WINDOWS) {
+      try {
+        rawKill(signal as any);
+      } catch {
+        // ignore fallback error if already terminated
+      }
+      return true;
+    }
+    return rawKill(signal as any);
   }) as any;
 
   const timeouts = withProcessTimeouts(child, {
