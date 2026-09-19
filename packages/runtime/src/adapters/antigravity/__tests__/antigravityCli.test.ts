@@ -542,4 +542,118 @@ describe("Antigravity CLI Runner", () => {
 
     await expect(runPromise).rejects.toThrow("runtime produced no output");
   });
+
+  it("removes abort listener from abortSignal when process closes", async () => {
+    const abortController = new AbortController();
+    const removeEventListenerSpy = vi.spyOn(abortController.signal, "removeEventListener");
+
+    const input = createInput({
+      execution: { abortController },
+    });
+
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    simulateStreamAndClose(0, [
+      { event: "result", result: { status: "SUCCESS", response: "Clean exit" } },
+    ]);
+    await runPromise;
+
+    expect(removeEventListenerSpy).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("ensures child.kill is idempotent and does not run killProcessTree repeatedly", async () => {
+    mockSpawnSync.mockClear();
+    const input = createInput();
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    mockChild.kill("SIGTERM");
+    mockChild.kill("SIGKILL");
+
+    if (process.platform === "win32") {
+      expect(mockSpawnSync).toHaveBeenCalledTimes(1);
+    }
+
+    simulateStreamAndClose(0, [{ event: "result", result: { status: "SUCCESS", response: "OK" } }]);
+    await runPromise;
+  });
+
+  it("flushes complete lines and trailing json line when stream closes without trailing newline", async () => {
+    const onStderr = vi.fn();
+    const input = createInput({
+      execution: { onStderr },
+    });
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    const stdoutHandler = mockStdout.on.mock.calls.find((c: unknown[]) => c[0] === "data")?.[1] as
+      | ((chunk: Buffer | string) => void)
+      | undefined;
+    const stderrHandler = mockStderr.on.mock.calls.find((c: unknown[]) => c[0] === "data")?.[1] as
+      | ((chunk: Buffer | string) => void)
+      | undefined;
+    const closeHandler = mockChild.on.mock.calls.find((c: unknown[]) => c[0] === "close")?.[1] as
+      | ((code: number) => void)
+      | undefined;
+
+    // Send line 1 with newline, and line 2 without trailing newline
+    const line1 = JSON.stringify({ event: "step_update", step_update: { step_index: 1 } }) + "\n";
+    const line2 = JSON.stringify({
+      event: "result",
+      result: { status: "SUCCESS", response: "Flushed on close" },
+    });
+
+    stdoutHandler?.(line1);
+    stdoutHandler?.(line2); // no trailing newline
+    stderrHandler?.("Trailing stderr note");
+
+    closeHandler?.(0);
+
+    const result = await runPromise;
+    expect(result.outputText).toBe("Flushed on close");
+    expect(onStderr).toHaveBeenCalledWith(expect.stringContaining("Trailing stderr note"));
+  });
+
+  it("composes prompt with input.systemPrompt when provided", async () => {
+    const input = createInput({
+      systemPrompt: "Base system instruction",
+      prompt: "User query",
+      execution: {
+        systemPromptAppend: "System append instruction",
+      },
+    });
+
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    expect(mockChild.stdin.write).toHaveBeenCalledWith(
+      "[SYSTEM PROMPT]:\nBase system instruction\n\nUser query\n\n[SYSTEM INSTRUCTIONS]:\nSystem append instruction",
+    );
+
+    simulateStreamAndClose(0, [
+      { event: "result", result: { status: "SUCCESS", response: "Done" } },
+    ]);
+    await runPromise;
+  });
+
+  it("rejects batch script executable paths (.cmd and .bat) across all platforms", async () => {
+    const inputCmd = createInput();
+    await expect(
+      runAntigravityCli(inputCmd, undefined, {
+        pathToAntigravityExecutable: "scripts/run.cmd",
+      }),
+    ).rejects.toThrow("prohibited to prevent Windows shell injection");
+
+    const inputBat = createInput();
+    await expect(
+      runAntigravityCli(inputBat, undefined, {
+        pathToAntigravityExecutable: "scripts/run.bat",
+      }),
+    ).rejects.toThrow("prohibited to prevent Windows shell injection");
+  });
 });

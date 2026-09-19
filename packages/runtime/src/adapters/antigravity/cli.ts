@@ -25,10 +25,8 @@ function spawnSubprocess(
   cwd: string | undefined,
   env: Record<string, string>,
 ) {
-  if (
-    IS_WINDOWS &&
-    (cliPath.toLowerCase().endsWith(".cmd") || cliPath.toLowerCase().endsWith(".bat"))
-  ) {
+  const lower = cliPath.toLowerCase();
+  if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
     throw new AntigravityRuntimeAdapterError(
       `Executing Antigravity via batch script (${cliPath}) is prohibited to prevent Windows shell injection. Point directly to agy.exe.`,
       "ANTIGRAVITY_SECURITY_VIOLATION",
@@ -115,6 +113,7 @@ function resolveTimeoutMs(input: RuntimeRunInput): number {
 }
 
 function killProcessTree(pid: number): void {
+  if (typeof pid !== "number" || pid <= 0) return;
   if (IS_WINDOWS) {
     try {
       spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
@@ -341,7 +340,17 @@ function composeFullPrompt(input: RuntimeRunInput): string {
   const options = asRecord(input.options);
   const execution = input.execution;
   const systemAppend = execution?.systemPromptAppend ?? readString(options.systemPromptAppend);
-  return systemAppend ? `${input.prompt}\n\n[SYSTEM INSTRUCTIONS]:\n${systemAppend}` : input.prompt;
+  const parts: string[] = [];
+  if (input.systemPrompt?.trim()) {
+    parts.push(`[SYSTEM PROMPT]:\n${input.systemPrompt.trim()}`);
+  }
+  if (input.prompt) {
+    parts.push(input.prompt);
+  }
+  if (systemAppend?.trim()) {
+    parts.push(`[SYSTEM INSTRUCTIONS]:\n${systemAppend.trim()}`);
+  }
+  return parts.join("\n\n");
 }
 
 function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string): string[] {
@@ -410,9 +419,13 @@ async function runCliAttempt(
 
   const child = spawnSubprocess(cliPath, args, input.cwd, env);
 
+  let killed = false;
   const rawKill = child.kill.bind(child);
   child.kill = ((signal?: NodeJS.Signals | number) => {
-    if (child.pid) killProcessTree(child.pid);
+    if (!killed) {
+      killed = true;
+      if (child.pid && child.pid > 0) killProcessTree(child.pid);
+    }
     return IS_WINDOWS ? true : rawKill(signal as any);
   }) as any;
 
@@ -457,8 +470,7 @@ async function runCliAttempt(
         { runtimeId: input.runtimeId, err },
         "Antigravity CLI stream-json processing error",
       );
-      if (child.pid) killProcessTree(child.pid);
-      else child.kill("SIGTERM");
+      child.kill("SIGTERM");
     }
   });
 
@@ -479,35 +491,40 @@ async function runCliAttempt(
 
   // Abort handling
   const abortSignal = execution?.abortController?.signal ?? (input as any).abortSignal;
+  const onAbort = () => {
+    child.kill("SIGTERM");
+  };
   if (abortSignal) {
     if (abortSignal.aborted) {
-      if (child.pid) killProcessTree(child.pid);
-      else child.kill("SIGTERM");
+      onAbort();
     } else {
-      abortSignal.addEventListener(
-        "abort",
-        () => {
-          if (child.pid) killProcessTree(child.pid);
-          else child.kill("SIGTERM");
-        },
-        { once: true },
-      );
+      abortSignal.addEventListener("abort", onAbort, { once: true });
     }
   }
 
   return new Promise((resolve, reject) => {
     child.on("error", (error) => {
+      killed = true;
       timeouts.cleanup();
+      abortSignal?.removeEventListener("abort", onAbort);
       fs.unlink(tempLogFile, () => {});
       reject(classifyAntigravityRuntimeError(error));
     });
 
     child.on("close", async (code) => {
+      killed = true;
       timeouts.cleanup();
+      abortSignal?.removeEventListener("abort", onAbort);
       fs.unlink(tempLogFile, () => {});
 
+      const trailingStderr = stderrDecoder.end();
+      if (trailingStderr) {
+        stderr += trailingStderr;
+        execution?.onStderr?.(trailingStderr);
+      }
+
       stdoutBuffer += stdoutDecoder.end();
-      stderr += stderrDecoder.end();
+      flushCompleteLines();
 
       if (abortSignal?.aborted) {
         reject(

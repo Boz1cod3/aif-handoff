@@ -51,10 +51,8 @@ export function findAntigravityPath(): string | undefined {
       .map((line) => line.trim().replace(/^"(.*)"$/, "$1"))
       .find((line) => {
         if (!line || !existsSync(line)) return false;
-        if (IS_WINDOWS) {
-          const lower = line.toLowerCase();
-          if (lower.endsWith(".cmd") || lower.endsWith(".bat")) return false;
-        }
+        const lower = line.toLowerCase();
+        if (lower.endsWith(".cmd") || lower.endsWith(".bat")) return false;
         return true;
       });
 

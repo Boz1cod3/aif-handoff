@@ -326,6 +326,22 @@ describe("Antigravity Adapter Coverage Suite", () => {
       expect(diag).not.toContain("Recommendation:");
     });
 
+    it("diagnoses pre-classified errors using structured category and adapterCode", async () => {
+      const modelErr = classifyAntigravityRuntimeError(new Error("invalid model selection"));
+      const diagModel = await adapter.diagnoseError!({ error: modelErr });
+      expect(diagModel).toContain("The specified model is not supported or recognized");
+
+      const authErr = classifyAntigravityRuntimeError(new Error("User unauthorized"), 401);
+      const diagAuth = await adapter.diagnoseError!({ error: authErr });
+      expect(diagAuth).toContain("Run 'agy' or login interactively");
+
+      const enoentErr = classifyAntigravityRuntimeError(
+        Object.assign(new Error("missing"), { code: "ENOENT" }),
+      );
+      const diagEnoent = await adapter.diagnoseError!({ error: enoentErr });
+      expect(diagEnoent).toContain("Ensure 'agy.exe' is installed in PATH");
+    });
+
     it("validateConnection returns failure when probeAntigravityCli fails", async () => {
       mockExecFileSync.mockImplementation(() => {
         throw new Error("CLI probe failed");
