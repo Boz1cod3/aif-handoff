@@ -137,12 +137,24 @@ export function createAntigravityRuntimeAdapter(
       const lowered = `${errorMsg} ${input.stderrTail ?? ""}`.toLowerCase();
 
       let suggestion = "";
-      if (lowered.includes("auth") || lowered.includes("not logged in")) {
+      if (
+        lowered.includes("invalid model selection") ||
+        (lowered.includes("model") &&
+          (lowered.includes("not recognized") || lowered.includes("not found")))
+      ) {
+        suggestion =
+          "\nRecommendation: The specified model is not supported or recognized. Run 'agy models' or select a valid model like 'gemini-3.8-flash-high'.";
+      } else if (lowered.includes("auth") || lowered.includes("not logged in")) {
         suggestion = "\nRecommendation: Run 'agy' or login interactively to refresh credentials.";
       } else if (lowered.includes("503") || lowered.includes("capacity")) {
         suggestion =
           "\nRecommendation: Gemini model capacity is temporarily exhausted. Switch to 'gemini-3.8-flash-low' or retry in a few moments.";
-      } else if (lowered.includes("enoent") || lowered.includes("not recognized")) {
+      } else if (
+        (input.error as { code?: string })?.code === "ENOENT" ||
+        lowered.includes("enoent") ||
+        lowered.includes("cannot find") ||
+        lowered.includes("no such file")
+      ) {
         suggestion =
           "\nRecommendation: Ensure 'agy.exe' is installed in PATH or set the ANTIGRAVITY_BIN_PATH environment variable.";
       }
