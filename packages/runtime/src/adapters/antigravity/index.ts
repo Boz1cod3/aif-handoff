@@ -88,7 +88,7 @@ export function createAntigravityRuntimeAdapter(
       capabilities: ANTIGRAVITY_CAPABILITIES,
     },
 
-    getEffectiveCapabilities(): RuntimeCapabilities {
+    getEffectiveCapabilities(_transport?: RuntimeTransport): RuntimeCapabilities {
       return ANTIGRAVITY_CAPABILITIES;
     },
 
