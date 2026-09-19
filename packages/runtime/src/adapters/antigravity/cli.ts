@@ -1,4 +1,5 @@
-import { spawn, exec } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -24,10 +25,8 @@ function spawnSubprocess(
   cwd: string | undefined,
   env: Record<string, string>,
 ) {
-  if (
-    IS_WINDOWS &&
-    (cliPath.toLowerCase().endsWith(".cmd") || cliPath.toLowerCase().endsWith(".bat"))
-  ) {
+  const lower = cliPath.toLowerCase();
+  if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
     throw new AntigravityRuntimeAdapterError(
       `Executing Antigravity via batch script (${cliPath}) is prohibited to prevent Windows shell injection. Point directly to agy.exe.`,
       "ANTIGRAVITY_SECURITY_VIOLATION",
@@ -39,6 +38,7 @@ function spawnSubprocess(
     shell: false,
     windowsHide: true,
     env,
+    detached: !IS_WINDOWS,
   });
 }
 
@@ -113,9 +113,13 @@ function resolveTimeoutMs(input: RuntimeRunInput): number {
 }
 
 function killProcessTree(pid: number): void {
+  if (typeof pid !== "number" || pid <= 0) return;
   if (IS_WINDOWS) {
     try {
-      exec(`taskkill /PID ${pid} /T /F`, () => {});
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
     } catch {
       // ignore
     }
@@ -177,7 +181,7 @@ function processStreamJsonLine(
   line: string,
   state: StreamState,
   input: RuntimeRunInput,
-  logger?: AntigravityCliLogger,
+  _logger?: AntigravityCliLogger,
 ): void {
   const execution = input.execution;
   const trimmed = line.trim();
@@ -236,21 +240,47 @@ function processStreamJsonLine(
       su.tool_name ||
       su.tool_info
     ) {
+      // When tool execution completes (state === "DONE"), emit tool:result and do not
+      // re-emit tool:use to avoid duplicate tool logging in chat/agent activity streams.
+      if (su.state === "DONE" && (su.step_type === "tool" || su.step_type === "tool_call")) {
+        const toolInfo = asRecord(su.tool_info);
+        const toolName = String(su.tool_name ?? toolInfo.name ?? "unknown_tool");
+        const toolUseId =
+          typeof su.tool_id === "string"
+            ? su.tool_id
+            : typeof su.call_id === "string"
+              ? su.call_id
+              : su.step_index != null
+                ? `step-${su.step_index}`
+                : null;
+        const output = toolInfo.output ?? su.tool_output ?? su.result;
+        emitEvent(state, execution, {
+          type: "tool:result",
+          timestamp: nowIso,
+          level: "info",
+          message: summarizeToolInput(output),
+          data: { name: toolName, id: toolUseId, output },
+        });
+        return;
+      }
+
       const toolInfo = asRecord(su.tool_info);
-      const toolCalls = Array.isArray(su.tool_calls)
-        ? (su.tool_calls as Array<Record<string, unknown>>)
-        : su.tool_name || toolInfo.name
-          ? [
-              {
-                name: su.tool_name ?? toolInfo.name,
-                id:
-                  su.tool_id ??
-                  su.call_id ??
-                  (su.step_index != null ? `step-${su.step_index}` : null),
-                input: toolInfo.parameters ?? su.tool_input ?? su.arguments,
-              },
-            ]
-          : [];
+      const rawToolCalls = Array.isArray(su.tool_calls) ? su.tool_calls : [];
+      const toolCalls =
+        rawToolCalls.length > 0
+          ? rawToolCalls.map(asRecord)
+          : su.tool_name || toolInfo.name
+            ? [
+                {
+                  name: su.tool_name ?? toolInfo.name,
+                  id:
+                    su.tool_id ??
+                    su.call_id ??
+                    (su.step_index != null ? `step-${su.step_index}` : null),
+                  input: toolInfo.parameters ?? su.tool_input ?? su.arguments,
+                },
+              ]
+            : [];
 
       for (const tc of toolCalls) {
         const toolName = String(tc.name ?? tc.tool_name ?? "unknown_tool");
@@ -306,6 +336,23 @@ function processStreamJsonLine(
   }
 }
 
+function composeFullPrompt(input: RuntimeRunInput): string {
+  const options = asRecord(input.options);
+  const execution = input.execution;
+  const systemAppend = execution?.systemPromptAppend ?? readString(options.systemPromptAppend);
+  const parts: string[] = [];
+  if (input.systemPrompt?.trim()) {
+    parts.push(`[SYSTEM PROMPT]:\n${input.systemPrompt.trim()}`);
+  }
+  if (input.prompt) {
+    parts.push(input.prompt);
+  }
+  if (systemAppend?.trim()) {
+    parts.push(`[SYSTEM INSTRUCTIONS]:\n${systemAppend.trim()}`);
+  }
+  return parts.join("\n\n");
+}
+
 function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string): string[] {
   const options = asRecord(input.options);
   const execution = input.execution;
@@ -314,14 +361,7 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
   const timeoutMs = resolveTimeoutMs(input);
   const printTimeoutMinutes = Math.max(5, Math.ceil(timeoutMs / 60_000));
 
-  const systemAppend = execution?.systemPromptAppend ?? readString(options.systemPromptAppend);
-  const fullPrompt = systemAppend
-    ? `${input.prompt}\n\n[SYSTEM INSTRUCTIONS]:\n${systemAppend}`
-    : input.prompt;
-
   const args: string[] = [
-    "-p",
-    fullPrompt,
     "--model",
     model,
     "--output-format",
@@ -361,7 +401,7 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
 }
 
 interface CliAttemptResult {
-  result: RuntimeRunResult;
+  result: RuntimeRunResult | null;
   startTimedOut: boolean;
 }
 
@@ -374,9 +414,28 @@ async function runCliAttempt(
   const execution = input.execution;
   const runId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const tempLogFile = path.join(os.tmpdir(), `agy-${runId}.log`);
+  const fullPrompt = composeFullPrompt(input);
   const args = buildCliArgs(input, tempLogFile, runId);
 
   const child = spawnSubprocess(cliPath, args, input.cwd, env);
+
+  let killed = false;
+  const rawKill = child.kill.bind(child);
+  child.kill = ((signal?: NodeJS.Signals | number) => {
+    if (!killed) {
+      killed = true;
+      if (child.pid && child.pid > 0) killProcessTree(child.pid);
+    }
+    if (IS_WINDOWS) {
+      try {
+        rawKill(signal as any);
+      } catch {
+        // ignore fallback error if already terminated
+      }
+      return true;
+    }
+    return rawKill(signal as any);
+  }) as any;
 
   const timeouts = withProcessTimeouts(child, {
     startTimeoutMs: execution?.startTimeoutMs,
@@ -384,6 +443,8 @@ async function runCliAttempt(
   });
 
   const state = createStreamState(input.sessionId ?? null);
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
   let stdoutBuffer = "";
   let stderr = "";
   let streamProcessingError: unknown = null;
@@ -408,7 +469,7 @@ async function runCliAttempt(
   };
 
   child.stdout!.on("data", (chunk: Buffer | string) => {
-    stdoutBuffer += String(chunk);
+    stdoutBuffer += typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk);
     try {
       flushCompleteLines();
     } catch (err) {
@@ -417,51 +478,61 @@ async function runCliAttempt(
         { runtimeId: input.runtimeId, err },
         "Antigravity CLI stream-json processing error",
       );
-      if (child.pid) killProcessTree(child.pid);
-      else child.kill("SIGTERM");
+      child.kill("SIGTERM");
     }
   });
 
   child.stderr!.on("data", (chunk: Buffer | string) => {
-    const text = String(chunk);
+    const text = typeof chunk === "string" ? chunk : stderrDecoder.write(chunk);
     stderr += text;
     execution?.onStderr?.(text);
   });
 
-  // Close stdin so child process does not wait on interactive console input
+  // Deliver prompt via stdin and close so child process does not wait on interactive console input
   child.stdin!.on("error", () => {
     /* ignore broken-pipe */
   });
+  if (fullPrompt) {
+    child.stdin!.write(fullPrompt);
+  }
   child.stdin!.end();
 
   // Abort handling
   const abortSignal = execution?.abortController?.signal ?? (input as any).abortSignal;
+  const onAbort = () => {
+    child.kill("SIGTERM");
+  };
   if (abortSignal) {
     if (abortSignal.aborted) {
-      if (child.pid) killProcessTree(child.pid);
-      else child.kill("SIGTERM");
+      onAbort();
     } else {
-      abortSignal.addEventListener(
-        "abort",
-        () => {
-          if (child.pid) killProcessTree(child.pid);
-          else child.kill("SIGTERM");
-        },
-        { once: true },
-      );
+      abortSignal.addEventListener("abort", onAbort, { once: true });
     }
   }
 
   return new Promise((resolve, reject) => {
     child.on("error", (error) => {
+      killed = true;
       timeouts.cleanup();
+      abortSignal?.removeEventListener("abort", onAbort);
       fs.unlink(tempLogFile, () => {});
       reject(classifyAntigravityRuntimeError(error));
     });
 
     child.on("close", async (code) => {
+      killed = true;
       timeouts.cleanup();
+      abortSignal?.removeEventListener("abort", onAbort);
       fs.unlink(tempLogFile, () => {});
+
+      const trailingStderr = stderrDecoder.end();
+      if (trailingStderr) {
+        stderr += trailingStderr;
+        execution?.onStderr?.(trailingStderr);
+      }
+
+      stdoutBuffer += stdoutDecoder.end();
+      flushCompleteLines();
 
       if (abortSignal?.aborted) {
         reject(
@@ -496,7 +567,7 @@ async function runCliAttempt(
           { runtimeId: input.runtimeId, startTimeoutMs: startMs },
           "Antigravity CLI start timeout — process produced no output",
         );
-        resolve({ result: null as unknown as RuntimeRunResult, startTimedOut: true });
+        resolve({ result: null, startTimedOut: true });
         return;
       }
 
@@ -559,7 +630,7 @@ export async function runAntigravityCli(
 
   const { result, startTimedOut } = await runCliAttempt(input, cliPath, env, logger);
 
-  if (startTimedOut) {
+  if (startTimedOut || !result) {
     const retryDelayMs = resolveRetryDelay(execution ?? {});
     logger?.warn?.(
       { runtimeId: input.runtimeId, retryDelayMs },
@@ -568,7 +639,7 @@ export async function runAntigravityCli(
     await sleepMs(retryDelayMs);
 
     const retry = await runCliAttempt(input, cliPath, env, logger);
-    if (retry.startTimedOut) {
+    if (retry.startTimedOut || !retry.result) {
       throw makeProcessStartTimeoutError(execution?.startTimeoutMs ?? 0);
     }
     return retry.result;

@@ -105,6 +105,32 @@ describe("Antigravity Runtime Adapter", () => {
       expect(err.adapterCode).toBe("ANTIGRAVITY_RUNTIME_ERROR");
       expect(err.category).toBe("unknown");
     });
+
+    it("classifies model not recognized errors as model_not_found instead of CLI missing", () => {
+      const err = classifyAntigravityRuntimeError(
+        new Error(
+          'error: invalid model selection (--model "unknown-model"): model unknown-model is not recognized',
+        ),
+      );
+      expect(err.adapterCode).toBe("ANTIGRAVITY_MODEL_NOT_FOUND");
+      expect(err.category).toBe("model_not_found");
+    });
+
+    it("classifies ENOENT error object with code property as CLI not found", () => {
+      const raw = Object.assign(new Error("spawn agy ENOENT"), { code: "ENOENT" });
+      const err = classifyAntigravityRuntimeError(raw);
+      expect(err.adapterCode).toBe("ANTIGRAVITY_CLI_NOT_FOUND");
+      expect(err.category).toBe("transport");
+    });
+
+    it("diagnoses model not recognized as model error rather than CLI missing", async () => {
+      const adapter = createAntigravityRuntimeAdapter();
+      const diagnosis = await adapter.diagnoseError!({
+        error: new Error("model foo is not recognized"),
+      });
+      expect(diagnosis).toContain("Selected model is not recognized by Antigravity CLI");
+      expect(diagnosis).not.toContain("Ensure 'agy.exe' is installed in PATH");
+    });
   });
 
   describe("Input sanitization", () => {

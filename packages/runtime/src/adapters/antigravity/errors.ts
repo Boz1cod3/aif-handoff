@@ -6,17 +6,8 @@ import {
   type RuntimeErrorCategory,
 } from "../../errors.js";
 
-/** Antigravity CLI error string patterns that map to specific categories. */
-const CLI_NOT_FOUND_PATTERNS = ["enoent", "not recognized", "no such file", "cannot find"];
-const CAPACITY_PATTERNS = ["503", "no capacity", "overloaded", "capacity"];
-const QUOTA_PATTERNS = ["resourceexhausted", "quota", "rate limit", "429"];
-const AUTH_PATTERNS = [
-  "not logged in",
-  "authentication",
-  "unauthenticated",
-  "login required",
-  "unauthorized",
-];
+/** Antigravity CLI error string patterns that map to transport errors (missing binary). */
+const CLI_NOT_FOUND_PATTERNS = ["enoent", "no such file", "cannot find"];
 
 /** Map semantic category to Antigravity-specific adapter code. */
 const CATEGORY_TO_ADAPTER_CODE: Record<RuntimeErrorCategory, string> = {
@@ -49,20 +40,21 @@ function classify(
 
   const lowered = message.toLowerCase();
 
+  // Model selection errors must be checked before CLI binary missing checks
+  if (
+    lowered.includes("invalid model selection") ||
+    (lowered.includes("model") &&
+      (lowered.includes("not recognized") || lowered.includes("not found")))
+  ) {
+    return { adapterCode: "ANTIGRAVITY_MODEL_NOT_FOUND", category: "model_not_found" };
+  }
+
   if (CLI_NOT_FOUND_PATTERNS.some((p) => lowered.includes(p))) {
     return { adapterCode: "ANTIGRAVITY_CLI_NOT_FOUND", category: "transport" };
   }
 
-  if (CAPACITY_PATTERNS.some((p) => lowered.includes(p))) {
+  if (lowered.includes("capacity") || lowered.includes("503")) {
     return { adapterCode: "ANTIGRAVITY_CAPACITY_UNAVAILABLE", category: "rate_limit" };
-  }
-
-  if (QUOTA_PATTERNS.some((p) => lowered.includes(p))) {
-    return { adapterCode: "ANTIGRAVITY_RATE_LIMIT", category: "rate_limit" };
-  }
-
-  if (AUTH_PATTERNS.some((p) => lowered.includes(p))) {
-    return { adapterCode: "ANTIGRAVITY_AUTH_ERROR", category: "auth" };
   }
 
   const category = classifyByMessageFallback(message);
@@ -118,8 +110,11 @@ export function classifyAntigravityRuntimeError(
     return error;
   }
 
+  const isEnoentCode = (error as { code?: string })?.code === "ENOENT";
   const message = messageFromUnknown(error);
-  const { adapterCode, category } = classify(message, httpStatus);
+  const { adapterCode, category } = isEnoentCode
+    ? { adapterCode: "ANTIGRAVITY_CLI_NOT_FOUND", category: "transport" as const }
+    : classify(message, httpStatus);
   const merged = mergeMetadata(error, httpStatus, metadata);
 
   return new AntigravityRuntimeAdapterError(

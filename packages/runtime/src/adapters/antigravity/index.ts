@@ -19,6 +19,7 @@ import {
   LIGHT_ANTIGRAVITY_MODEL,
   discoverAntigravityModels,
 } from "./models.js";
+import { classifyAntigravityRuntimeError } from "./errors.js";
 
 export type AntigravityRuntimeAdapterLogger = AntigravityCliLogger;
 
@@ -129,14 +130,39 @@ export function createAntigravityRuntimeAdapter(
       const errorMsg = input.error instanceof Error ? input.error.message : String(input.error);
       const tail = input.stderrTail ? `\nStderr tail:\n${input.stderrTail}` : "";
       const lowered = `${errorMsg} ${input.stderrTail ?? ""}`.toLowerCase();
+      const classified = classifyAntigravityRuntimeError(input.error);
 
       let suggestion = "";
-      if (lowered.includes("auth") || lowered.includes("not logged in")) {
+      if (
+        classified.category === "model_not_found" ||
+        classified.adapterCode === "ANTIGRAVITY_MODEL_NOT_FOUND" ||
+        lowered.includes("invalid model selection") ||
+        (lowered.includes("model") &&
+          (lowered.includes("not recognized") || lowered.includes("not found")))
+      ) {
+        suggestion =
+          "\nRecommendation: Selected model is not recognized by Antigravity CLI. Use a supported model such as 'gemini-3.8-flash-high'.";
+      } else if (
+        classified.category === "auth" ||
+        classified.adapterCode === "ANTIGRAVITY_AUTH_ERROR" ||
+        lowered.includes("auth") ||
+        lowered.includes("not logged in")
+      ) {
         suggestion = "\nRecommendation: Run 'agy' or login interactively to refresh credentials.";
-      } else if (lowered.includes("503") || lowered.includes("capacity")) {
+      } else if (
+        classified.category === "rate_limit" ||
+        classified.adapterCode === "ANTIGRAVITY_CAPACITY_UNAVAILABLE" ||
+        lowered.includes("503") ||
+        lowered.includes("capacity")
+      ) {
         suggestion =
           "\nRecommendation: Gemini model capacity is temporarily exhausted. Switch to 'gemini-3.8-flash-low' or retry in a few moments.";
-      } else if (lowered.includes("enoent") || lowered.includes("not recognized")) {
+      } else if (
+        classified.adapterCode === "ANTIGRAVITY_CLI_NOT_FOUND" ||
+        (input.error as { code?: string })?.code === "ENOENT" ||
+        lowered.includes("enoent") ||
+        lowered.includes("cannot find")
+      ) {
         suggestion =
           "\nRecommendation: Ensure 'agy.exe' is installed in PATH or set the ANTIGRAVITY_BIN_PATH environment variable.";
       }

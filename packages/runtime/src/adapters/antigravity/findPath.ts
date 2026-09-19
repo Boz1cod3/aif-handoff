@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { resolve, join } from "node:path";
+import { resolve } from "node:path";
 import { assertSafeWindowsShellExecutablePath } from "../../shellSafety.js";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -51,10 +51,8 @@ export function findAntigravityPath(): string | undefined {
       .map((line) => line.trim().replace(/^"(.*)"$/, "$1"))
       .find((line) => {
         if (!line || !existsSync(line)) return false;
-        if (IS_WINDOWS) {
-          const lower = line.toLowerCase();
-          if (lower.endsWith(".cmd") || lower.endsWith(".bat")) return false;
-        }
+        const lower = line.toLowerCase();
+        if (lower.endsWith(".cmd") || lower.endsWith(".bat")) return false;
         return true;
       });
 
@@ -75,15 +73,15 @@ export function probeAntigravityCli(cliPath: string): {
   error?: string;
 } {
   try {
+    const lower = cliPath.toLowerCase();
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
+      return {
+        ok: false,
+        error: `Executing Antigravity via batch script (${cliPath}) is prohibited. Point directly to agy.exe.`,
+      };
+    }
     if (IS_WINDOWS) {
       assertSafeWindowsShellExecutablePath(cliPath, "Antigravity CLI path");
-      const lower = cliPath.toLowerCase();
-      if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-        return {
-          ok: false,
-          error: `Executing Antigravity via batch script (${cliPath}) is prohibited. Point directly to agy.exe.`,
-        };
-      }
     }
     const out = execFileSync(cliPath, ["--version"], {
       timeout: 5_000,
