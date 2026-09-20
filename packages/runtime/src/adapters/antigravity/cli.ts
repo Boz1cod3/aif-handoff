@@ -112,16 +112,25 @@ function resolveTimeoutMs(input: RuntimeRunInput): number {
   return input.execution?.runTimeoutMs ?? 1_800_000; // 30m default
 }
 
-function killProcessTree(pid: number): void {
-  if (typeof pid !== "number" || pid <= 0) return;
-  if (IS_WINDOWS) {
+export function killProcessTree(pid: number, platform: NodeJS.Platform = process.platform): void {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 1) return;
+  if (platform === "win32") {
+    let succeeded = false;
     try {
-      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      const res = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
         windowsHide: true,
         stdio: "ignore",
       });
+      succeeded = !res?.error && res?.status === 0;
     } catch {
-      // ignore
+      succeeded = false;
+    }
+    if (!succeeded) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // ignore
+      }
     }
   } else {
     try {
@@ -434,7 +443,11 @@ async function runCliAttempt(
       }
       return true;
     }
-    return rawKill(signal as any);
+    try {
+      return rawKill(signal as any);
+    } catch {
+      return false;
+    }
   }) as any;
 
   const timeouts = withProcessTimeouts(child, {
@@ -493,7 +506,7 @@ async function runCliAttempt(
     /* ignore broken-pipe */
   });
   if (fullPrompt) {
-    child.stdin!.write(fullPrompt);
+    child.stdin!.write(fullPrompt, "utf8");
   }
   child.stdin!.end();
 
@@ -511,7 +524,11 @@ async function runCliAttempt(
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+
     child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
       killed = true;
       timeouts.cleanup();
       abortSignal?.removeEventListener("abort", onAbort);
@@ -520,6 +537,8 @@ async function runCliAttempt(
     });
 
     child.on("close", async (code) => {
+      if (settled) return;
+      settled = true;
       killed = true;
       timeouts.cleanup();
       abortSignal?.removeEventListener("abort", onAbort);
@@ -532,7 +551,13 @@ async function runCliAttempt(
       }
 
       stdoutBuffer += stdoutDecoder.end();
-      flushCompleteLines();
+      try {
+        flushCompleteLines();
+      } catch (err) {
+        if (!streamProcessingError) {
+          streamProcessingError = err;
+        }
+      }
 
       if (abortSignal?.aborted) {
         reject(
@@ -631,12 +656,29 @@ export async function runAntigravityCli(
   const { result, startTimedOut } = await runCliAttempt(input, cliPath, env, logger);
 
   if (startTimedOut || !result) {
+    const abortSignal = execution?.abortController?.signal ?? (input as any).abortSignal;
+    if (abortSignal?.aborted) {
+      throw new AntigravityRuntimeAdapterError(
+        "Antigravity execution was aborted",
+        "ANTIGRAVITY_ABORTED",
+        "unknown",
+      );
+    }
+
     const retryDelayMs = resolveRetryDelay(execution ?? {});
     logger?.warn?.(
       { runtimeId: input.runtimeId, retryDelayMs },
       "Antigravity CLI start timeout, retrying once after delay",
     );
     await sleepMs(retryDelayMs);
+
+    if (abortSignal?.aborted) {
+      throw new AntigravityRuntimeAdapterError(
+        "Antigravity execution was aborted",
+        "ANTIGRAVITY_ABORTED",
+        "unknown",
+      );
+    }
 
     const retry = await runCliAttempt(input, cliPath, env, logger);
     if (retry.startTimedOut || !retry.result) {

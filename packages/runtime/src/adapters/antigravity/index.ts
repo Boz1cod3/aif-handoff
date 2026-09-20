@@ -14,7 +14,6 @@ import {
 import { findAntigravityPath, probeAntigravityCli } from "./findPath.js";
 import { runAntigravityCli, type AntigravityCliLogger } from "./cli.js";
 import {
-  ANTIGRAVITY_MODELS,
   DEFAULT_ANTIGRAVITY_MODEL,
   LIGHT_ANTIGRAVITY_MODEL,
   discoverAntigravityModels,

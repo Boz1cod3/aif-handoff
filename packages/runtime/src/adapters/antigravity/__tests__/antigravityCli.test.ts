@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeEvent, RuntimeRunInput } from "../../../types.js";
 import { TEST_USAGE_CONTEXT } from "../../../__tests__/helpers/usageContext.js";
 
@@ -14,7 +14,7 @@ const {
   const stdout = { on: vi.fn() };
   const stderr = { on: vi.fn() };
   const stdin = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
-  const spawnSync = vi.fn();
+  const spawnSync = vi.fn().mockReturnValue({ status: 0 });
   return {
     mockStdout: stdout,
     mockStderr: stderr,
@@ -32,6 +32,8 @@ const {
     },
   };
 });
+
+const mockProcessKill = vi.spyOn(process, "kill").mockImplementation((() => true) as any);
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -115,8 +117,16 @@ function simulateStreamAndClose(code: number, jsonlLines: unknown[] = [], stderr
 describe("Antigravity CLI Runner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockProcessKill.mockClear();
+    mockProcessKill.mockImplementation((() => true) as any);
+    mockSpawnSync.mockReset();
+    mockSpawnSync.mockReturnValue({ status: 0 });
     mockWithProcessTimeouts.mockReset();
     mockSleepMs.mockReset();
+  });
+
+  afterAll(() => {
+    mockProcessKill.mockRestore();
   });
 
   it("streams text deltas, tool:use on ACTIVE, and tool:result on DONE", async () => {
@@ -291,7 +301,7 @@ describe("Antigravity CLI Runner", () => {
     );
   });
 
-  it("intercepts child.kill to terminate process tree via taskkill on Windows", async () => {
+  it("intercepts child.kill to terminate process tree via taskkill on Windows or process.kill on POSIX", async () => {
     const input = createInput();
     const runPromise = runAntigravityCli(input, undefined, {
       pathToAntigravityExecutable: "agy.exe",
@@ -306,6 +316,8 @@ describe("Antigravity CLI Runner", () => {
         ["/PID", "1234", "/T", "/F"],
         expect.objectContaining({ windowsHide: true, stdio: "ignore" }),
       );
+    } else {
+      expect(mockProcessKill).toHaveBeenCalledWith(-1234, "SIGKILL");
     }
 
     simulateStreamAndClose(0, [
@@ -335,6 +347,7 @@ describe("Antigravity CLI Runner", () => {
     expect(args).not.toContain("--prompt");
     expect(mockChild.stdin.write).toHaveBeenCalledWith(
       "Execute long prompt instruction\n\n[SYSTEM INSTRUCTIONS]:\nSystem appended rules",
+      "utf8",
     );
     expect(mockChild.stdin.end).toHaveBeenCalled();
 
@@ -383,6 +396,16 @@ describe("Antigravity CLI Runner", () => {
       pathToAntigravityExecutable: "agy.exe",
     });
 
+    if (process.platform === "win32") {
+      expect(mockSpawnSync).toHaveBeenCalledWith(
+        "taskkill",
+        ["/PID", "1234", "/T", "/F"],
+        expect.any(Object),
+      );
+    } else {
+      expect(mockProcessKill).toHaveBeenCalledWith(-1234, "SIGKILL");
+    }
+
     simulateStreamAndClose(0, []);
     await expect(runPromise).rejects.toThrow("Antigravity execution was aborted");
   });
@@ -398,6 +421,17 @@ describe("Antigravity CLI Runner", () => {
     });
 
     abortController.abort();
+
+    if (process.platform === "win32") {
+      expect(mockSpawnSync).toHaveBeenCalledWith(
+        "taskkill",
+        ["/PID", "1234", "/T", "/F"],
+        expect.any(Object),
+      );
+    } else {
+      expect(mockProcessKill).toHaveBeenCalledWith(-1234, "SIGKILL");
+    }
+
     simulateStreamAndClose(0, []);
     await expect(runPromise).rejects.toThrow("Antigravity execution was aborted");
   });
@@ -565,6 +599,7 @@ describe("Antigravity CLI Runner", () => {
 
   it("ensures child.kill is idempotent and does not run killProcessTree repeatedly", async () => {
     mockSpawnSync.mockClear();
+    mockProcessKill.mockClear();
     const input = createInput();
     const runPromise = runAntigravityCli(input, undefined, {
       pathToAntigravityExecutable: "agy.exe",
@@ -575,6 +610,9 @@ describe("Antigravity CLI Runner", () => {
 
     if (process.platform === "win32") {
       expect(mockSpawnSync).toHaveBeenCalledTimes(1);
+    } else {
+      expect(mockProcessKill).toHaveBeenCalledTimes(1);
+      expect(mockProcessKill).toHaveBeenCalledWith(-1234, "SIGKILL");
     }
 
     simulateStreamAndClose(0, [{ event: "result", result: { status: "SUCCESS", response: "OK" } }]);
@@ -633,6 +671,7 @@ describe("Antigravity CLI Runner", () => {
 
     expect(mockChild.stdin.write).toHaveBeenCalledWith(
       "[SYSTEM PROMPT]:\nBase system instruction\n\nUser query\n\n[SYSTEM INSTRUCTIONS]:\nSystem append instruction",
+      "utf8",
     );
 
     simulateStreamAndClose(0, [
@@ -655,5 +694,94 @@ describe("Antigravity CLI Runner", () => {
         pathToAntigravityExecutable: "scripts/run.bat",
       }),
     ).rejects.toThrow("prohibited to prevent Windows shell injection");
+  });
+
+  it("rejects with makeProcessRunTimeoutError when process execution times out", async () => {
+    mockWithProcessTimeouts.mockReturnValueOnce({
+      cleanup: vi.fn(),
+      startTimedOut: Promise.resolve(false),
+      runTimedOut: true,
+    });
+
+    const input = createInput({
+      execution: { runTimeoutMs: 5000 },
+    });
+
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    simulateStreamAndClose(0, []);
+
+    await expect(runPromise).rejects.toThrow("Run timeout: execution exceeded 5000ms limit");
+  });
+
+  it("captures and rejects on stream processing error when event listener throws", async () => {
+    const errorListener = vi.fn().mockImplementation(() => {
+      throw new Error("Consumer onEvent crash");
+    });
+
+    const input = createInput({
+      execution: {
+        onEvent: errorListener,
+      },
+    });
+
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    // Send a valid JSON line that will trigger onEvent and throw
+    simulateStreamAndClose(0, [
+      { event: "result", result: { status: "SUCCESS", response: "Done" } },
+    ]);
+
+    await expect(runPromise).rejects.toThrow("Consumer onEvent crash");
+  });
+
+  it("handles error event followed by close event without duplicate cleanup or unhandled rejection", async () => {
+    const input = createInput();
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    const errorHandler = mockChild.on.mock.calls.find((c: unknown[]) => c[0] === "error")?.[1] as
+      | ((err: Error) => void)
+      | undefined;
+    const closeHandler = mockChild.on.mock.calls.find((c: unknown[]) => c[0] === "close")?.[1] as
+      | ((code: number) => void)
+      | undefined;
+
+    // Trigger error then close
+    errorHandler?.(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+    closeHandler?.(1);
+
+    await expect(runPromise).rejects.toThrow();
+  });
+
+  it("aborts during start timeout retry delay without spawning second attempt", async () => {
+    const abortController = new AbortController();
+    mockWithProcessTimeouts.mockReturnValueOnce({
+      cleanup: vi.fn(),
+      startTimedOut: Promise.resolve(true),
+      runTimedOut: false,
+    });
+
+    mockSleepMs.mockImplementation(async () => {
+      abortController.abort();
+    });
+
+    const input = createInput({
+      execution: { startTimeoutMs: 1000, startRetryDelayMs: 100, abortController },
+    });
+
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    simulateStreamAndClose(0);
+
+    await expect(runPromise).rejects.toThrow("Antigravity execution was aborted");
+    expect(mockWithProcessTimeouts).toHaveBeenCalledTimes(1);
   });
 });
