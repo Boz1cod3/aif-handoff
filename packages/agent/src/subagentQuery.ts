@@ -687,6 +687,7 @@ async function resolveExecutionContext(options: SubagentQueryOptions): Promise<{
     runtimeOptions: resolved.options,
     workflow,
     codexNativeSubagentsEnabled: getEnv().AIF_RUNTIME_CODEX_NATIVE_SUBAGENTS_ENABLED,
+    antigravityNativeSubagentsEnabled: true,
     logger: {
       debug(context, message) {
         log.debug({ ...context }, `[runtime-workflow] ${message}`);
