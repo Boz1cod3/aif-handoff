@@ -208,3 +208,16 @@ export function registerRuntimeModule(registry: {
 }): void {
   registry.registerRuntime(createAntigravityRuntimeAdapter(), { source: "module" });
 }
+
+export {
+  ANTIGRAVITY_SUBAGENT_STRATEGIES,
+  ANTIGRAVITY_SUBAGENT_STRATEGY_OPTION,
+  ANTIGRAVITY_NATIVE_AGENT_FILES,
+  getAntigravityNativeSubagentWorkflowGuidance,
+  resolveAntigravitySubagentStrategy,
+  resolveAntigravityNativeSubagentReadiness,
+  type AntigravitySubagentStrategy,
+  type AntigravitySubagentStrategyResolution,
+  type AntigravitySubagentStrategyResolutionReason,
+  type AntigravityNativeSubagentReadiness,
+} from "./subagentStrategy.js";

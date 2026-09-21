@@ -261,3 +261,16 @@ export {
   DEFAULT_ANTIGRAVITY_MODEL,
   LIGHT_ANTIGRAVITY_MODEL,
 } from "./adapters/antigravity/models.js";
+
+export {
+  ANTIGRAVITY_SUBAGENT_STRATEGIES,
+  ANTIGRAVITY_SUBAGENT_STRATEGY_OPTION,
+  ANTIGRAVITY_NATIVE_AGENT_FILES,
+  getAntigravityNativeSubagentWorkflowGuidance,
+  resolveAntigravitySubagentStrategy,
+  resolveAntigravityNativeSubagentReadiness,
+  type AntigravitySubagentStrategy,
+  type AntigravitySubagentStrategyResolution,
+  type AntigravitySubagentStrategyResolutionReason,
+  type AntigravityNativeSubagentReadiness,
+} from "./adapters/antigravity/subagentStrategy.js";
