@@ -6,6 +6,12 @@ import {
   resolveCodexNativeSubagentReadiness,
   resolveCodexSubagentStrategy,
 } from "./adapters/codex/subagentStrategy.js";
+import {
+  ANTIGRAVITY_SUBAGENT_STRATEGIES,
+  getAntigravityNativeSubagentWorkflowGuidance,
+  resolveAntigravityNativeSubagentReadiness,
+  resolveAntigravitySubagentStrategy,
+} from "./adapters/antigravity/subagentStrategy.js";
 
 export interface RuntimePromptPolicyLogger {
   debug?(context: Record<string, unknown>, message: string): void;
@@ -19,6 +25,7 @@ export interface RuntimePromptPolicyInput {
   runtimeOptions?: Record<string, unknown>;
   workflow: RuntimeWorkflowSpec;
   codexNativeSubagentsEnabled?: boolean;
+  antigravityNativeSubagentsEnabled?: boolean;
   logger?: RuntimePromptPolicyLogger;
 }
 
@@ -60,10 +67,28 @@ function prependSlashFallbackPrompt(prompt: string, fallbackSlashCommand: string
 }
 
 function prependNativeSubagentPrompt(
+  input: RuntimePromptPolicyInput,
   workflow: RuntimeWorkflowSpec,
   prompt: string,
   agentDefinitionName: string,
 ): string {
+  if (input.runtimeId === "antigravity") {
+    const agentReference = `Use Antigravity native subagents for this workflow.\nDispatch the custom agent "${agentDefinitionName}" or invoke subagents via invoke_subagent with Workspace: "branch" to coordinate this workflow.`;
+    const workflowSpecificGuidance = getAntigravityNativeSubagentWorkflowGuidance(
+      workflow.workflowKind,
+    );
+
+    return [
+      "Use Antigravity native subagents for this workflow.",
+      agentReference,
+      "Wait for delegated work to complete before producing the final answer.",
+      "Do not use slash or skill commands as the primary execution mechanism when native subagents are available.",
+      workflowSpecificGuidance,
+      "",
+      prompt,
+    ].join("\n");
+  }
+
   const agentReference = `Spawn the custom Codex agent "${agentDefinitionName}" and delegate this workflow to it.`;
   const workflowSpecificGuidance = getNativeSubagentWorkflowGuidance(workflow.workflowKind);
 
@@ -87,20 +112,40 @@ export function resolveRuntimePromptPolicy(
   const wantsNativeSubagentWorkflow = input.workflow.executionMode === "native_subagents";
   const wantsIsolatedSkillCommand = input.workflow.executionMode === "isolated_skill_session";
   const wantsSlashFallback = input.workflow.fallbackStrategy === "slash_command";
+
+  const isCodex = input.runtimeId === "codex";
+  const isAntigravity = input.runtimeId === "antigravity";
+
   const codexSubagentStrategy = resolveCodexSubagentStrategy(
     input.runtimeId,
     input.runtimeOptions,
     { nativeSubagentsEnabled: input.codexNativeSubagentsEnabled === true },
   );
-  const codexNativeReadiness =
-    input.runtimeId === "codex" ? resolveCodexNativeSubagentReadiness(input.projectRoot) : null;
+  const codexNativeReadiness = isCodex
+    ? resolveCodexNativeSubagentReadiness(input.projectRoot)
+    : null;
+
+  const antigravitySubagentStrategy = resolveAntigravitySubagentStrategy(
+    input.runtimeId,
+    input.runtimeOptions,
+    { nativeSubagentsEnabled: input.antigravityNativeSubagentsEnabled !== false },
+  );
+  const antigravityNativeReadiness = isAntigravity
+    ? resolveAntigravityNativeSubagentReadiness(input.projectRoot)
+    : null;
+
   const supportsIsolatedSkillCommand = Boolean(
     input.capabilities.supportsIsolatedSubagentWorkflows,
   );
   const supportsNativeSubagentWorkflow =
-    codexSubagentStrategy.strategy === CODEX_SUBAGENT_STRATEGIES.native &&
     Boolean(input.capabilities.supportsNativeSubagentWorkflows) &&
-    (input.runtimeId !== "codex" || codexNativeReadiness?.ready === true);
+    (isCodex
+      ? codexSubagentStrategy.strategy === CODEX_SUBAGENT_STRATEGIES.native &&
+        codexNativeReadiness?.ready === true
+      : isAntigravity
+        ? antigravitySubagentStrategy.strategy === ANTIGRAVITY_SUBAGENT_STRATEGIES.native &&
+          antigravityNativeReadiness?.ready === true
+        : false);
   const hasFallbackCommand = Boolean(input.workflow.promptInput.fallbackSlashCommand?.trim());
   const hasNativeAgentName = Boolean(input.workflow.agentDefinitionName?.trim());
   const useNativeSubagentWorkflow =
@@ -195,6 +240,59 @@ export function resolveRuntimePromptPolicy(
     );
   }
 
+  if (antigravitySubagentStrategy.reason === "invalid_fallback") {
+    input.logger?.warn?.(
+      {
+        runtimeId: input.runtimeId,
+        workflowKind: input.workflow.workflowKind,
+        invalidValue: antigravitySubagentStrategy.configuredValue,
+      },
+      "Ignoring invalid Antigravity subagent strategy override; falling back to slash-command execution",
+    );
+  }
+  if (
+    wantsNativeSubagentWorkflow &&
+    antigravitySubagentStrategy.reason === "explicit_isolated" &&
+    input.runtimeId === "antigravity"
+  ) {
+    input.logger?.warn?.(
+      {
+        runtimeId: input.runtimeId,
+        workflowKind: input.workflow.workflowKind,
+      },
+      "Native Antigravity subagents disabled via runtime option; falling back to slash-command execution",
+    );
+  }
+  if (
+    wantsNativeSubagentWorkflow &&
+    antigravitySubagentStrategy.reason === "disabled_by_env" &&
+    input.runtimeId === "antigravity"
+  ) {
+    input.logger?.warn?.(
+      {
+        runtimeId: input.runtimeId,
+        workflowKind: input.workflow.workflowKind,
+      },
+      "Native Antigravity subagents disabled; falling back to slash-command execution",
+    );
+  }
+  if (
+    wantsNativeSubagentWorkflow &&
+    input.runtimeId === "antigravity" &&
+    antigravitySubagentStrategy.strategy === ANTIGRAVITY_SUBAGENT_STRATEGIES.native &&
+    antigravityNativeReadiness &&
+    !antigravityNativeReadiness.ready
+  ) {
+    input.logger?.warn?.(
+      {
+        runtimeId: input.runtimeId,
+        workflowKind: input.workflow.workflowKind,
+        missingPaths: antigravityNativeReadiness.missingPaths,
+      },
+      "Native Antigravity subagents requested but project is missing required AI Factory-managed .agents/agents assets; falling back to slash-command execution",
+    );
+  }
+
   if (wantsSlashFallback && !hasFallbackCommand) {
     input.logger?.warn?.(
       {
@@ -213,8 +311,17 @@ export function resolveRuntimePromptPolicy(
       codexNativeReadiness &&
       !codexNativeReadiness.ready
     ) &&
+    !(
+      input.runtimeId === "antigravity" &&
+      antigravitySubagentStrategy.strategy === ANTIGRAVITY_SUBAGENT_STRATEGIES.native &&
+      antigravityNativeReadiness &&
+      !antigravityNativeReadiness.ready
+    ) &&
     codexSubagentStrategy.reason !== "invalid_fallback" &&
-    codexSubagentStrategy.reason !== "disabled_by_env"
+    codexSubagentStrategy.reason !== "disabled_by_env" &&
+    antigravitySubagentStrategy.reason !== "invalid_fallback" &&
+    antigravitySubagentStrategy.reason !== "disabled_by_env" &&
+    antigravitySubagentStrategy.reason !== "explicit_isolated"
   ) {
     input.logger?.warn?.(
       {
@@ -245,6 +352,7 @@ export function resolveRuntimePromptPolicy(
 
   const prompt = useNativeSubagentWorkflow
     ? prependNativeSubagentPrompt(
+        input,
         input.workflow,
         input.workflow.promptInput.prompt,
         input.workflow.agentDefinitionName ?? "",
@@ -265,6 +373,23 @@ export function resolveRuntimePromptPolicy(
     ? input.workflow.agentDefinitionName
     : undefined;
 
+  let nativeSubagentFallbackReason: string | undefined = undefined;
+  if (wantsNativeSubagentWorkflow && !useNativeSubagentWorkflow) {
+    if (input.runtimeId === "codex") {
+      if (codexNativeReadiness && !codexNativeReadiness.ready) {
+        nativeSubagentFallbackReason = "missing_native_assets";
+      } else if (codexSubagentStrategy.reason !== "non_codex") {
+        nativeSubagentFallbackReason = codexSubagentStrategy.reason;
+      }
+    } else if (input.runtimeId === "antigravity") {
+      if (antigravityNativeReadiness && !antigravityNativeReadiness.ready) {
+        nativeSubagentFallbackReason = "missing_native_assets";
+      } else if (antigravitySubagentStrategy.reason !== "non_antigravity") {
+        nativeSubagentFallbackReason = antigravitySubagentStrategy.reason;
+      }
+    }
+  }
+
   input.logger?.debug?.(
     {
       runtimeId: input.runtimeId,
@@ -272,19 +397,7 @@ export function resolveRuntimePromptPolicy(
       usedFallbackSlashCommand: useSlashFallback,
       usedIsolatedSkillCommand: useIsolatedSkillCommand,
       usedNativeSubagentWorkflow: useNativeSubagentWorkflow,
-      nativeSubagentFallbackReason:
-        input.runtimeId === "codex" &&
-        wantsNativeSubagentWorkflow &&
-        !useNativeSubagentWorkflow &&
-        codexNativeReadiness &&
-        !codexNativeReadiness.ready
-          ? "missing_native_assets"
-          : input.runtimeId === "codex" &&
-              wantsNativeSubagentWorkflow &&
-              !useNativeSubagentWorkflow &&
-              codexSubagentStrategy.reason !== "non_codex"
-            ? codexSubagentStrategy.reason
-            : null,
+      nativeSubagentFallbackReason: nativeSubagentFallbackReason ?? null,
       agentDefinitionName: agentDefinitionName ?? null,
       systemPromptAppendLength: systemPromptAppend.length,
     },
@@ -298,18 +411,6 @@ export function resolveRuntimePromptPolicy(
     usedFallbackSlashCommand: useSlashFallback,
     usedIsolatedSkillCommand: useIsolatedSkillCommand,
     usedNativeSubagentWorkflow: useNativeSubagentWorkflow,
-    nativeSubagentFallbackReason:
-      input.runtimeId === "codex" &&
-      wantsNativeSubagentWorkflow &&
-      !useNativeSubagentWorkflow &&
-      codexNativeReadiness &&
-      !codexNativeReadiness.ready
-        ? "missing_native_assets"
-        : input.runtimeId === "codex" &&
-            wantsNativeSubagentWorkflow &&
-            !useNativeSubagentWorkflow &&
-            codexSubagentStrategy.reason !== "non_codex"
-          ? codexSubagentStrategy.reason
-          : undefined,
+    nativeSubagentFallbackReason,
   };
 }

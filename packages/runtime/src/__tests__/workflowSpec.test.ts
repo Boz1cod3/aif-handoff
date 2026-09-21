@@ -38,6 +38,43 @@ const CLAUDE_CAPABILITIES: RuntimeCapabilities = {
   usageReporting: UsageReporting.FULL,
 };
 
+const ANTIGRAVITY_CAPABILITIES: RuntimeCapabilities = {
+  supportsResume: true,
+  supportsSessionFork: false,
+  supportsSessionList: false,
+  supportsAgentDefinitions: false,
+  supportsStreaming: true,
+  supportsModelDiscovery: true,
+  supportsApprovals: false,
+  supportsCustomEndpoint: false,
+  supportsIsolatedSubagentWorkflows: false,
+  supportsNativeSubagentWorkflows: true,
+  usageReporting: UsageReporting.FULL,
+};
+
+function createAntigravityNativeAssetsProjectRoot(): string {
+  const projectRoot = mkdtempSync(join(tmpdir(), "aif-antigravity-native-assets-"));
+  const agentsDir = join(projectRoot, ".agents", "agents");
+  mkdirSync(agentsDir, { recursive: true });
+
+  for (const fileName of [
+    "best-practices-sidecar.md",
+    "commit-preparer.md",
+    "docs-auditor.md",
+    "implement-coordinator.md",
+    "implement-worker.md",
+    "plan-coordinator.md",
+    "plan-polisher.md",
+    "review-sidecar.md",
+    "rules-sidecar.md",
+    "security-sidecar.md",
+  ]) {
+    writeFileSync(join(agentsDir, fileName), `---\nname: ${fileName}\n---\n`, "utf8");
+  }
+
+  return projectRoot;
+}
+
 function createCodexNativeAssetsProjectRoot(): string {
   const projectRoot = mkdtempSync(join(tmpdir(), "aif-codex-native-assets-"));
   const agentsDir = join(projectRoot, ".codex", "agents");
@@ -346,6 +383,89 @@ describe("runtime workflow spec + prompt policy", () => {
     expect(resolved.usedFallbackSlashCommand).toBe(false);
     expect(resolved.agentDefinitionName).toBe("implement-coordinator");
     expect(resolved.prompt).toBe("Implement this feature");
+  });
+
+  it("uses native Antigravity subagents when runtime supports them and assets exist", () => {
+    const projectRoot = createAntigravityNativeAssetsProjectRoot();
+    const workflow = createRuntimeWorkflowSpec({
+      workflowKind: "implementer",
+      prompt: "Implement this feature",
+      agentDefinitionName: "implement-coordinator",
+      fallbackSlashCommand: "/aif-implement @.ai-factory/PLAN.md",
+      fallbackStrategy: "slash_command",
+      executionMode: "native_subagents",
+      requiredCapabilities: ["supportsAgentDefinitions"],
+    });
+
+    const resolved = resolveRuntimePromptPolicy({
+      runtimeId: "antigravity",
+      projectRoot,
+      capabilities: ANTIGRAVITY_CAPABILITIES,
+      runtimeOptions: {},
+      workflow,
+      antigravityNativeSubagentsEnabled: true,
+    });
+
+    expect(resolved.usedNativeSubagentWorkflow).toBe(true);
+    expect(resolved.usedIsolatedSkillCommand).toBe(false);
+    expect(resolved.usedFallbackSlashCommand).toBe(false);
+    expect(resolved.agentDefinitionName).toBeUndefined();
+    expect(resolved.prompt).toContain("Use Antigravity native subagents for this workflow.");
+    expect(resolved.prompt).toContain('invoke_subagent with Workspace: "branch"');
+    expect(resolved.prompt).not.toContain("/aif-implement @.ai-factory/PLAN.md");
+  });
+
+  it("falls back to slash command when Antigravity native assets are missing on disk", () => {
+    const workflow = createRuntimeWorkflowSpec({
+      workflowKind: "implementer",
+      prompt: "Implement this feature",
+      agentDefinitionName: "implement-coordinator",
+      fallbackSlashCommand: "/aif-implement @.ai-factory/PLAN.md",
+      fallbackStrategy: "slash_command",
+      executionMode: "native_subagents",
+      requiredCapabilities: ["supportsAgentDefinitions"],
+    });
+
+    const resolved = resolveRuntimePromptPolicy({
+      runtimeId: "antigravity",
+      projectRoot: mkdtempSync(join(tmpdir(), "aif-antigravity-missing-assets-")),
+      capabilities: ANTIGRAVITY_CAPABILITIES,
+      runtimeOptions: {},
+      workflow,
+      antigravityNativeSubagentsEnabled: true,
+    });
+
+    expect(resolved.usedNativeSubagentWorkflow).toBe(false);
+    expect(resolved.usedFallbackSlashCommand).toBe(true);
+    expect(resolved.nativeSubagentFallbackReason).toBe("missing_native_assets");
+    expect(resolved.prompt).toContain("/aif-implement @.ai-factory/PLAN.md");
+    expect(resolved.prompt).not.toContain("Use Antigravity native subagents for this workflow.");
+  });
+
+  it("falls back to slash command when Antigravity native subagents are disabled via runtime option", () => {
+    const projectRoot = createAntigravityNativeAssetsProjectRoot();
+    const workflow = createRuntimeWorkflowSpec({
+      workflowKind: "implementer",
+      prompt: "Implement this feature",
+      agentDefinitionName: "implement-coordinator",
+      fallbackSlashCommand: "/aif-implement @.ai-factory/PLAN.md",
+      fallbackStrategy: "slash_command",
+      executionMode: "native_subagents",
+      requiredCapabilities: ["supportsAgentDefinitions"],
+    });
+
+    const resolved = resolveRuntimePromptPolicy({
+      runtimeId: "antigravity",
+      projectRoot,
+      capabilities: ANTIGRAVITY_CAPABILITIES,
+      runtimeOptions: { antigravitySubagentStrategy: "isolated" },
+      workflow,
+      antigravityNativeSubagentsEnabled: true,
+    });
+
+    expect(resolved.usedNativeSubagentWorkflow).toBe(false);
+    expect(resolved.usedFallbackSlashCommand).toBe(true);
+    expect(resolved.prompt).toContain("/aif-implement @.ai-factory/PLAN.md");
   });
 
   it("downgrades isolated skill-command mode to slash fallback when runtime lacks capability", () => {
