@@ -8,6 +8,7 @@ import {
   clearDiscoveredModelsCache,
 } from "../models.js";
 import * as findPathModule from "../findPath.js";
+import { resolveCliPath } from "../findPath.js";
 import { classifyAntigravityRuntimeError } from "../errors.js";
 import { bootstrapRuntimeRegistry } from "../../../bootstrap.js";
 import { UsageReporting, RuntimeTransport } from "../../../types.js";
@@ -31,9 +32,13 @@ describe("Antigravity Runtime Adapter", () => {
       expect(caps.supportsResume).toBe(true);
       expect(caps.supportsStreaming).toBe(true);
       expect(caps.supportsModelDiscovery).toBe(true);
-      expect(caps.supportsNativeSubagentWorkflows).toBe(true);
+      expect(caps.supportsNativeSubagentWorkflows).toBe(false);
       expect(caps.supportsSessionFork).toBe(false);
       expect(caps.usageReporting).toBe(UsageReporting.FULL);
+      expect(adapter.getEffectiveCapabilities!(RuntimeTransport.CLI)).toEqual(caps);
+
+      expect(adapter.descriptor.supportsProjectInit).toBe(true);
+      expect(adapter.descriptor.projectInitAgentName).toBe("antigravity");
     });
   });
 
@@ -63,9 +68,60 @@ describe("Antigravity Runtime Adapter", () => {
       const proMedium = models.find((m) => m.id === "gemini-3.1-pro-medium");
       expect(proMedium).toBeUndefined();
     });
+
+    it("honors antigravityCliPath in options for listModels", async () => {
+      const customPath = "/custom/tools/agy";
+      const customAdapter = createAntigravityRuntimeAdapter({ executablePath: "/default/agy" });
+      const spy = vi
+        .spyOn(findPathModule, "probeAntigravityCli")
+        .mockReturnValue({ ok: false, error: "not installed" });
+
+      await customAdapter.listModels!({
+        runtimeId: "antigravity",
+        options: { antigravityCliPath: customPath },
+      });
+
+      spy.mockRestore();
+    });
+  });
+
+  describe("resolveCliPath resolution", () => {
+    it("returns options.antigravityCliPath when specified", () => {
+      expect(resolveCliPath({ antigravityCliPath: "/opt/agy" })).toBe("/opt/agy");
+    });
+
+    it("returns fallbackPath when options are empty and fallback is provided", () => {
+      expect(resolveCliPath({}, "/fallback/agy")).toBe("/fallback/agy");
+    });
+
+    it("returns platform-appropriate binary name when no path is found", () => {
+      const originalPlatform = process.platform;
+      const emptyFinder = () => undefined;
+      try {
+        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+        expect(resolveCliPath({}, undefined, emptyFinder)).toBe("agy.exe");
+
+        Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+        expect(resolveCliPath({}, undefined, emptyFinder)).toBe("agy");
+
+        Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+        expect(resolveCliPath({}, undefined, emptyFinder)).toBe("agy");
+      } finally {
+        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+      }
+    });
   });
 
   describe("Error classification", () => {
+    it("classifies numeric HTTP status 503 as rate_limit / ANTIGRAVITY_CAPACITY_UNAVAILABLE", () => {
+      const err = classifyAntigravityRuntimeError(
+        new Error("Service temporarily unavailable"),
+        503,
+      );
+      expect(err.adapterCode).toBe("ANTIGRAVITY_CAPACITY_UNAVAILABLE");
+      expect(err.category).toBe("rate_limit");
+    });
+
     it("classifies capacity 503 errors", () => {
       const err = classifyAntigravityRuntimeError(new Error("503 No capacity available for model"));
       expect(err.adapterCode).toBe("ANTIGRAVITY_CAPACITY_UNAVAILABLE");

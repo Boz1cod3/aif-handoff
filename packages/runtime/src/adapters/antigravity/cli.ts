@@ -12,7 +12,8 @@ import {
   withProcessTimeouts,
 } from "../../timeouts.js";
 import { classifyAntigravityRuntimeError, AntigravityRuntimeAdapterError } from "./errors.js";
-import { findAntigravityPath } from "./findPath.js";
+import { resolveCliPath } from "./findPath.js";
+import { assertSafeWindowsShellExecutablePath } from "../../shellSafety.js";
 import { buildToolUseEvents } from "../../toolEvents.js";
 import { DEFAULT_ANTIGRAVITY_MODEL } from "./models.js";
 import { PROXY_ENV_VARS } from "../../proxyEnv.js";
@@ -25,14 +26,31 @@ function spawnSubprocess(
   cwd: string | undefined,
   env: Record<string, string>,
 ) {
-  const lower = cliPath.toLowerCase();
-  if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-    throw new AntigravityRuntimeAdapterError(
-      `Executing Antigravity via batch script (${cliPath}) is prohibited to prevent Windows shell injection. Point directly to agy.exe.`,
-      "ANTIGRAVITY_SECURITY_VIOLATION",
-      "permission",
-    );
+  if (IS_WINDOWS) {
+    assertSafeWindowsShellExecutablePath(cliPath, "Antigravity CLI path");
+    const lower = cliPath.toLowerCase().trim().replace(/\.+$/, "");
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat") || lower === "agy") {
+      // Node.js on Windows will auto-resolve 'agy' to 'agy.cmd' if it exists in PATH before 'agy.exe'.
+      // To strictly prevent cmd.exe spawning, we require the explicit .exe extension on Windows.
+      if (!lower.endsWith(".exe")) {
+        throw new AntigravityRuntimeAdapterError(
+          `Executing Antigravity via batch script or ambiguous path (${cliPath}) is prohibited to prevent Windows shell injection. Point explicitly to agy.exe.`,
+          "ANTIGRAVITY_SECURITY_VIOLATION",
+          "permission",
+        );
+      }
+    }
+  } else {
+    const lower = cliPath.toLowerCase();
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
+      throw new AntigravityRuntimeAdapterError(
+        `Executing Antigravity via batch script (${cliPath}) is prohibited.`,
+        "ANTIGRAVITY_SECURITY_VIOLATION",
+        "permission",
+      );
+    }
   }
+
   return spawn(cliPath, args, {
     cwd,
     shell: false,
@@ -82,30 +100,30 @@ const ALLOWED_ENV_PREFIXES = [
   "SYSTEMROOT",
   "COMSPEC",
   "PATHEXT",
+  "TEMP",
+  "TMP",
   ...PROXY_ENV_VARS,
 ];
 
-function buildCuratedEnv(executionEnv?: Record<string, string>): Record<string, string> {
+export function buildCuratedEnv(
+  executionEnv?: Record<string, string>,
+  sourceEnv: Record<string, string | undefined> = process.env,
+): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(sourceEnv)) {
     if (value == null) continue;
-    if (ALLOWED_ENV_PREFIXES.some((prefix) => key === prefix || key.startsWith(prefix))) {
+    const upperKey = key.toUpperCase();
+    if (
+      ALLOWED_ENV_PREFIXES.some((prefix) => {
+        const upperPrefix = prefix.toUpperCase();
+        return upperKey === upperPrefix || upperKey.startsWith(upperPrefix);
+      })
+    ) {
       env[key] = value;
     }
   }
   Object.assign(env, executionEnv ?? {});
   return env;
-}
-
-function resolveCliPath(input: RuntimeRunInput, adapterDefault?: string): string {
-  const options = asRecord(input.options);
-  return (
-    readString(options.antigravityCliPath) ??
-    readString(process.env.ANTIGRAVITY_BIN_PATH) ??
-    adapterDefault ??
-    findAntigravityPath() ??
-    "agy.exe"
-  );
 }
 
 function resolveTimeoutMs(input: RuntimeRunInput): number {
@@ -362,7 +380,7 @@ function composeFullPrompt(input: RuntimeRunInput): string {
   return parts.join("\n\n");
 }
 
-function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string): string[] {
+function buildCliArgs(input: RuntimeRunInput, tempLogFile: string): string[] {
   const options = asRecord(input.options);
   const execution = input.execution;
 
@@ -379,11 +397,13 @@ function buildCliArgs(input: RuntimeRunInput, tempLogFile: string, runId: string
     `${printTimeoutMinutes}m`,
     "--log-file",
     tempLogFile,
-    "--project",
-    `handoff-${runId}`,
     "--mode",
     "accept-edits",
   ];
+
+  if (typeof options.project === "string" && options.project.trim().length > 0) {
+    args.push("--project", options.project.trim());
+  }
 
   if (execution?.bypassPermissions === true) {
     args.push("--dangerously-skip-permissions");
@@ -424,7 +444,7 @@ async function runCliAttempt(
   const runId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const tempLogFile = path.join(os.tmpdir(), `agy-${runId}.log`);
   const fullPrompt = composeFullPrompt(input);
-  const args = buildCliArgs(input, tempLogFile, runId);
+  const args = buildCliArgs(input, tempLogFile);
 
   const child = spawnSubprocess(cliPath, args, input.cwd, env);
 
@@ -460,16 +480,23 @@ async function runCliAttempt(
   const stderrDecoder = new StringDecoder("utf8");
   let stdoutBuffer = "";
   let stderr = "";
+  const MAX_STDERR_BUFFER = 65_536;
   let streamProcessingError: unknown = null;
 
   // Immediate start event to satisfy orchestrator activity watchdog
-  emitEvent(state, execution, {
-    type: "system:init",
-    timestamp: new Date().toISOString(),
-    level: "debug",
-    message: "Antigravity process spawned",
-    data: { pid: child.pid },
-  });
+  try {
+    emitEvent(state, execution, {
+      type: "system:init",
+      timestamp: new Date().toISOString(),
+      level: "debug",
+      message: "Antigravity process spawned",
+      data: { pid: child.pid },
+    });
+  } catch (err) {
+    child.kill("SIGKILL");
+    timeouts.cleanup();
+    throw err;
+  }
 
   const flushCompleteLines = (): void => {
     let newlineIdx = stdoutBuffer.indexOf("\n");
@@ -498,6 +525,9 @@ async function runCliAttempt(
   child.stderr!.on("data", (chunk: Buffer | string) => {
     const text = typeof chunk === "string" ? chunk : stderrDecoder.write(chunk);
     stderr += text;
+    if (stderr.length > MAX_STDERR_BUFFER) {
+      stderr = stderr.slice(-MAX_STDERR_BUFFER);
+    }
     execution?.onStderr?.(text);
   });
 
@@ -637,7 +667,7 @@ export async function runAntigravityCli(
   logger?: AntigravityCliLogger,
   adapterDefaults?: { pathToAntigravityExecutable?: string },
 ): Promise<RuntimeRunResult> {
-  const cliPath = resolveCliPath(input, adapterDefaults?.pathToAntigravityExecutable);
+  const cliPath = resolveCliPath(input.options, adapterDefaults?.pathToAntigravityExecutable);
   const execution = input.execution;
   const env = buildCuratedEnv(execution?.environment);
 

@@ -11,7 +11,7 @@ import {
   type RuntimeRunInput,
   type RuntimeRunResult,
 } from "../../types.js";
-import { findAntigravityPath, probeAntigravityCli } from "./findPath.js";
+import { findAntigravityPath, probeAntigravityCli, resolveCliPath } from "./findPath.js";
 import { runAntigravityCli, type AntigravityCliLogger } from "./cli.js";
 import {
   DEFAULT_ANTIGRAVITY_MODEL,
@@ -40,7 +40,7 @@ const ANTIGRAVITY_CAPABILITIES: RuntimeCapabilities = {
   supportsApprovals: false,
   supportsCustomEndpoint: false,
   supportsIsolatedSubagentWorkflows: false,
-  supportsNativeSubagentWorkflows: true,
+  supportsNativeSubagentWorkflows: false,
   usageReporting: UsageReporting.FULL,
   supportsInteractiveQuestions: false,
 };
@@ -75,6 +75,8 @@ export function createAntigravityRuntimeAdapter(
       id: runtimeId,
       providerId,
       displayName: options.displayName ?? "Google Antigravity",
+      supportsProjectInit: true,
+      projectInitAgentName: "antigravity",
       lightModel: LIGHT_ANTIGRAVITY_MODEL,
       defaultModelPlaceholder: DEFAULT_ANTIGRAVITY_MODEL,
       defaultTransport: RuntimeTransport.CLI,
@@ -82,34 +84,30 @@ export function createAntigravityRuntimeAdapter(
       capabilities: ANTIGRAVITY_CAPABILITIES,
     },
 
-    getEffectiveCapabilities(): RuntimeCapabilities {
+    getEffectiveCapabilities(_transport?: RuntimeTransport): RuntimeCapabilities {
       return ANTIGRAVITY_CAPABILITIES;
     },
 
     async run(input: RuntimeRunInput): Promise<RuntimeRunResult> {
       return runAntigravityCli(input, logger, {
-        pathToAntigravityExecutable: executablePath,
+        pathToAntigravityExecutable: resolveCliPath(input.options, executablePath),
       });
     },
 
     async resume(input: RuntimeRunInput & { sessionId: string }): Promise<RuntimeRunResult> {
       return runAntigravityCli(input, logger, {
-        pathToAntigravityExecutable: executablePath,
+        pathToAntigravityExecutable: resolveCliPath(input.options, executablePath),
       });
     },
 
-    async listModels(_input: RuntimeModelListInput): Promise<RuntimeModel[]> {
-      return discoverAntigravityModels({ cliPath: executablePath });
+    async listModels(input: RuntimeModelListInput): Promise<RuntimeModel[]> {
+      return discoverAntigravityModels({ cliPath: resolveCliPath(input.options, executablePath) });
     },
 
     async validateConnection(
       input: RuntimeConnectionValidationInput,
     ): Promise<RuntimeConnectionValidationResult> {
-      const cliPath =
-        typeof input.options?.antigravityCliPath === "string" &&
-        input.options.antigravityCliPath.trim().length > 0
-          ? input.options.antigravityCliPath.trim()
-          : (executablePath ?? "agy.exe");
+      const cliPath = resolveCliPath(input.options, executablePath);
 
       const probe = probeAntigravityCli(cliPath);
       if (!probe.ok) {

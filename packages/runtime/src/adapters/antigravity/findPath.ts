@@ -98,3 +98,22 @@ export function probeAntigravityCli(cliPath: string): {
     };
   }
 }
+
+/**
+ * Unifies the resolution of the Antigravity CLI executable path across execution,
+ * validation, and discovery.
+ */
+export function resolveCliPath(
+  options?: Record<string, unknown>,
+  fallbackPath?: string,
+  finder: () => string | undefined = findAntigravityPath,
+): string {
+  if (
+    typeof options?.antigravityCliPath === "string" &&
+    options.antigravityCliPath.trim().length > 0
+  ) {
+    return options.antigravityCliPath.trim();
+  }
+  const defaultBinary = process.platform === "win32" ? "agy.exe" : "agy";
+  return fallbackPath ?? finder() ?? defaultBinary;
+}

@@ -7,6 +7,7 @@ const {
   mockStderr,
   _mockStdin,
   mockChild,
+  mockSpawn,
   mockSpawnSync,
   mockWithProcessTimeouts,
   mockSleepMs,
@@ -15,21 +16,24 @@ const {
   const stderr = { on: vi.fn() };
   const stdin = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
   const spawnSync = vi.fn().mockReturnValue({ status: 0 });
+  const child = {
+    pid: 1234,
+    stdout,
+    stderr,
+    stdin,
+    on: vi.fn(),
+    kill: vi.fn(),
+  };
+  const spawn = vi.fn().mockReturnValue(child);
   return {
     mockStdout: stdout,
     mockStderr: stderr,
     _mockStdin: stdin,
     mockSpawnSync: spawnSync,
+    mockSpawn: spawn,
     mockWithProcessTimeouts: vi.fn(),
     mockSleepMs: vi.fn(),
-    mockChild: {
-      pid: 1234,
-      stdout,
-      stderr,
-      stdin,
-      on: vi.fn(),
-      kill: vi.fn(),
-    },
+    mockChild: child,
   };
 });
 
@@ -39,7 +43,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return {
     ...actual,
-    spawn: vi.fn().mockReturnValue(mockChild),
+    spawn: mockSpawn,
     spawnSync: mockSpawnSync,
     exec: vi.fn(),
   };
@@ -64,7 +68,7 @@ vi.mock("../../../timeouts.js", async (importOriginal) => {
   };
 });
 
-const { runAntigravityCli } = await import("../cli.js");
+const { runAntigravityCli, buildCuratedEnv } = await import("../cli.js");
 
 function createInput(overrides: Partial<RuntimeRunInput> = {}): RuntimeRunInput {
   return {
@@ -117,6 +121,7 @@ function simulateStreamAndClose(code: number, jsonlLines: unknown[] = [], stderr
 describe("Antigravity CLI Runner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSpawn.mockClear();
     mockProcessKill.mockClear();
     mockProcessKill.mockImplementation((() => true) as any);
     mockSpawnSync.mockReset();
@@ -783,5 +788,94 @@ describe("Antigravity CLI Runner", () => {
 
     await expect(runPromise).rejects.toThrow("Antigravity execution was aborted");
     expect(mockWithProcessTimeouts).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not include --project flag when options.project is omitted", async () => {
+    const input = createInput({ options: {} });
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+    simulateStreamAndClose(0, []);
+    await runPromise;
+
+    const spawnArgs = mockSpawn.mock.calls[0]?.[1] as string[] | undefined;
+    expect(spawnArgs).toBeDefined();
+    expect(spawnArgs).not.toContain("--project");
+  });
+
+  it("includes --project flag when options.project is specified", async () => {
+    const input = createInput({ options: { project: "my-existing-project" } });
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+    simulateStreamAndClose(0, []);
+    await runPromise;
+
+    const spawnArgs = mockSpawn.mock.calls[0]?.[1] as string[] | undefined;
+    expect(spawnArgs).toBeDefined();
+    const projectIdx = spawnArgs!.indexOf("--project");
+    expect(projectIdx).toBeGreaterThanOrEqual(0);
+    expect(spawnArgs![projectIdx + 1]).toBe("my-existing-project");
+  });
+
+  it("preserves Windows environment variables case-insensitively (Path, SystemRoot, TEMP, TMP)", () => {
+    const mockEnv: Record<string, string> = {
+      Path: "C:\\Windows\\system32;C:\\Windows",
+      SystemRoot: "C:\\Windows",
+      ComSpec: "C:\\Windows\\system32\\cmd.exe",
+      TEMP: "C:\\Users\\test\\AppData\\Local\\Temp",
+      TMP: "C:\\Users\\test\\AppData\\Local\\Temp",
+      ANTIGRAVITY_API_KEY: "test-key",
+      HOME: "/home/test",
+      UNRELATED_SECRET: "should-be-stripped",
+    };
+
+    const env = buildCuratedEnv(undefined, mockEnv);
+
+    expect(env).toHaveProperty("Path", "C:\\Windows\\system32;C:\\Windows");
+    expect(env).toHaveProperty("SystemRoot", "C:\\Windows");
+    expect(env).toHaveProperty("ComSpec", "C:\\Windows\\system32\\cmd.exe");
+    expect(env).toHaveProperty("TEMP", "C:\\Users\\test\\AppData\\Local\\Temp");
+    expect(env).toHaveProperty("TMP", "C:\\Users\\test\\AppData\\Local\\Temp");
+    expect(env).toHaveProperty("ANTIGRAVITY_API_KEY", "test-key");
+    expect(env).toHaveProperty("HOME", "/home/test");
+    expect(env).not.toHaveProperty("UNRELATED_SECRET");
+  });
+
+  it("caps accumulated stderr buffer to 64KB while continuing to forward all chunks to onStderr", async () => {
+    const onStderr = vi.fn();
+    const input = createInput({
+      execution: { onStderr },
+    });
+    const runPromise = runAntigravityCli(input, undefined, {
+      pathToAntigravityExecutable: "agy.exe",
+    });
+
+    const stderrHandler = mockStderr.on.mock.calls.find((c: unknown[]) => c[0] === "data")?.[1] as
+      | ((chunk: string) => void)
+      | undefined;
+    const closeHandler = mockChild.on.mock.calls.find((c: unknown[]) => c[0] === "close")?.[1] as
+      | ((code: number) => void)
+      | undefined;
+
+    // Simulate sending 100 chunks of 1KB text (100KB > 64KB limit)
+    const chunk = "E".repeat(1024);
+    for (let i = 0; i < 100; i++) {
+      stderrHandler?.(chunk);
+    }
+
+    // Process exits with error code 1 to inspect accumulated stderr in rejected error
+    closeHandler?.(1);
+
+    await expect(runPromise).rejects.toThrow();
+    // onStderr should have received all 100 calls
+    expect(onStderr).toHaveBeenCalledTimes(100);
+
+    // Verify rejection error message does not blow up past ~64KB
+    try {
+      await runPromise;
+    } catch (err: any) {
+      expect(err.message.length).toBeLessThanOrEqual(65_536 + 1000);
+    }
   });
 });

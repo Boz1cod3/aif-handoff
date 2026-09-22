@@ -31,6 +31,10 @@ function classify(
   message: string,
   httpStatus?: number,
 ): { adapterCode: string; category: RuntimeErrorCategory } {
+  if (httpStatus === 503) {
+    return { adapterCode: "ANTIGRAVITY_CAPACITY_UNAVAILABLE", category: "rate_limit" };
+  }
+
   if (httpStatus !== undefined) {
     const category = classifyByHttpStatus(httpStatus);
     if (category) {
