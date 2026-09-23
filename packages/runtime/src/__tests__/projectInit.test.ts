@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetEnvCache } from "@aif/shared";
 import type { RuntimeRegistry } from "../registry.js";
 
 const execFileSyncMock = vi.fn();
@@ -80,6 +81,8 @@ describe("initProject (runtime)", () => {
   }
 
   beforeEach(() => {
+    delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+    resetEnvCache();
     projectRoot = mkdtempSync(join(tmpdir(), "aif-runtime-init-"));
     execFileSyncMock.mockReset();
     aiFactoryResolveMock.mockReset();
@@ -251,5 +254,49 @@ describe("initProject (runtime)", () => {
       ["C:\\fake\\ai-factory\\bin\\ai-factory.js", "init", "--agents", "claude,codex"],
       expect.objectContaining({ cwd: projectRoot }),
     );
+  });
+
+  it("omits antigravity from --agents when AIF_RUNTIME_ANTIGRAVITY_ENABLED is false", () => {
+    delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+    resetEnvCache();
+    mockAiFactoryVersion("2.9.2");
+    const registry = createMockRegistry(["claude", "codex", "antigravity"]);
+
+    const result = initProject({ projectRoot, registry });
+
+    expect(result.ok).toBe(true);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      process.execPath,
+      ["C:\\fake\\ai-factory\\bin\\ai-factory.js", "init", "--agents", "claude,codex"],
+      expect.objectContaining({ cwd: projectRoot }),
+    );
+  });
+
+  it("includes antigravity in --agents when AIF_RUNTIME_ANTIGRAVITY_ENABLED is true", () => {
+    process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED = "true";
+    resetEnvCache();
+    mockAiFactoryVersion("2.9.2");
+    const registry = createMockRegistry(["claude", "codex", "antigravity"]);
+
+    const result = initProject({ projectRoot, registry });
+
+    expect(result.ok).toBe(true);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      process.execPath,
+      ["C:\\fake\\ai-factory\\bin\\ai-factory.js", "init", "--agents", "claude,codex,antigravity"],
+      expect.objectContaining({ cwd: projectRoot }),
+    );
+  });
+
+  it("omits antigravity even when explicitly requested in runtimeIds if flag is false", () => {
+    delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+    resetEnvCache();
+    mockAiFactoryVersion("2.9.2");
+    const registry = createMockRegistry(["claude", "antigravity"]);
+
+    const result = initProject({ projectRoot, registry, runtimeIds: ["antigravity"] });
+
+    expect(result.ok).toBe(true);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
   });
 });

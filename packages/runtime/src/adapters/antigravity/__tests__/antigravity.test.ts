@@ -1,4 +1,25 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+
+const { mockExecFile } = vi.hoisted(() => ({
+  mockExecFile: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: ((file: any, args: any, options: any, cb: any) => {
+      if (typeof options === "function") {
+        cb = options;
+      }
+      if (mockExecFile.getMockImplementation()) {
+        return mockExecFile(file, args, options, cb);
+      }
+      return (actual.execFile as any)(file, args, options, cb);
+    }) as any,
+  };
+});
+
 import { createAntigravityRuntimeAdapter, registerRuntimeModule } from "../index.js";
 import {
   ANTIGRAVITY_MODELS,
@@ -6,6 +27,7 @@ import {
   LIGHT_ANTIGRAVITY_MODEL,
   discoverAntigravityModels,
   clearDiscoveredModelsCache,
+  normalizeCacheKey,
 } from "../models.js";
 import * as findPathModule from "../findPath.js";
 import { resolveCliPath } from "../findPath.js";
@@ -37,8 +59,12 @@ describe("Antigravity Runtime Adapter", () => {
       expect(caps.usageReporting).toBe(UsageReporting.FULL);
       expect(adapter.getEffectiveCapabilities!(RuntimeTransport.CLI)).toEqual(caps);
 
-      expect(adapter.descriptor.supportsProjectInit).toBe(true);
-      expect(adapter.descriptor.projectInitAgentName).toBe("antigravity");
+      expect(adapter.descriptor.supportsProjectInit).toBe(false);
+      expect(adapter.descriptor.projectInitAgentName).toBeUndefined();
+
+      const initAdapter = createAntigravityRuntimeAdapter({ supportsProjectInit: true });
+      expect(initAdapter.descriptor.supportsProjectInit).toBe(true);
+      expect(initAdapter.descriptor.projectInitAgentName).toBe("antigravity");
     });
   });
 
@@ -69,19 +95,128 @@ describe("Antigravity Runtime Adapter", () => {
       expect(proMedium).toBeUndefined();
     });
 
-    it("honors antigravityCliPath in options for listModels", async () => {
-      const customPath = "/custom/tools/agy";
-      const customAdapter = createAntigravityRuntimeAdapter({ executablePath: "/default/agy" });
-      const spy = vi
-        .spyOn(findPathModule, "probeAntigravityCli")
-        .mockReturnValue({ ok: false, error: "not installed" });
+    it("isolates model discovery cache across distinct executable paths", async () => {
+      const pathA = "/opt/tools/agy-alpha";
+      const pathB = "/opt/tools/agy-beta";
 
-      await customAdapter.listModels!({
+      mockExecFile.mockImplementation(((
+        file: string,
+        args: readonly string[] | null | undefined,
+        options: unknown,
+        callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        const cb = typeof options === "function" ? options : callback;
+        if (file === pathA) {
+          cb?.(null, { stdout: "model-alpha-only\tModel Alpha Only\n", stderr: "" });
+        } else if (file === pathB) {
+          cb?.(null, { stdout: "model-beta-only\tModel Beta Only\n", stderr: "" });
+        } else {
+          cb?.(new Error("unknown binary"), { stdout: "", stderr: "" });
+        }
+        return {} as any;
+      }) as any);
+
+      clearDiscoveredModelsCache();
+
+      const adapterA = createAntigravityRuntimeAdapter({ executablePath: pathA });
+      const adapterB = createAntigravityRuntimeAdapter({ executablePath: pathB });
+
+      const modelsA = await adapterA.listModels!({
         runtimeId: "antigravity",
-        options: { antigravityCliPath: customPath },
+        options: { antigravityCliPath: pathA },
       });
+      expect(modelsA.some((m) => m.id === "model-alpha-only")).toBe(true);
+      expect(modelsA.some((m) => m.id === "model-beta-only")).toBe(false);
 
-      spy.mockRestore();
+      // Distinct binary path must execute pathB and NOT return cached models from pathA
+      const modelsB = await adapterB.listModels!({
+        runtimeId: "antigravity",
+        options: { antigravityCliPath: pathB },
+      });
+      expect(modelsB.some((m) => m.id === "model-beta-only")).toBe(true);
+      expect(modelsB.some((m) => m.id === "model-alpha-only")).toBe(false);
+
+      // Repeated call for pathA reuses cache without re-executing
+      const callCountBefore = mockExecFile.mock.calls.length;
+      const modelsA2 = await adapterA.listModels!({
+        runtimeId: "antigravity",
+        options: { antigravityCliPath: pathA },
+      });
+      expect(modelsA2.some((m) => m.id === "model-alpha-only")).toBe(true);
+      expect(mockExecFile.mock.calls.length).toBe(callCountBefore);
+
+      mockExecFile.mockReset();
+      clearDiscoveredModelsCache();
+    });
+
+    it("normalizes cache keys in a platform-aware manner", () => {
+      // Windows (win32) is case-insensitive
+      expect(normalizeCacheKey("  C:\\Tools\\Agy.exe  ", "win32")).toBe("c:\\tools\\agy.exe");
+      expect(normalizeCacheKey("c:\\tools\\AGY.EXE", "win32")).toBe("c:\\tools\\agy.exe");
+
+      // POSIX is case-sensitive
+      expect(normalizeCacheKey("  /opt/Tools/Agy  ", "linux")).toBe("/opt/Tools/Agy");
+      expect(normalizeCacheKey("/opt/tools/agy", "linux")).toBe("/opt/tools/agy");
+      expect(normalizeCacheKey("/opt/Tools/Agy", "linux")).not.toBe(
+        normalizeCacheKey("/opt/tools/agy", "linux"),
+      );
+    });
+
+    it("clears cache for a single executable path without affecting other paths", async () => {
+      const pathA = "/opt/tools/agy-1";
+      const pathB = "/opt/tools/agy-2";
+
+      mockExecFile.mockImplementation(((
+        file: string,
+        args: readonly string[] | null | undefined,
+        options: unknown,
+        callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        const cb = typeof options === "function" ? options : callback;
+        if (file === pathA) {
+          cb?.(null, { stdout: "model-1\tModel 1\n", stderr: "" });
+        } else if (file === pathB) {
+          cb?.(null, { stdout: "model-2\tModel 2\n", stderr: "" });
+        }
+        return {} as any;
+      }) as any);
+
+      clearDiscoveredModelsCache();
+
+      // Populate cache for both
+      await discoverAntigravityModels({ cliPath: pathA });
+      await discoverAntigravityModels({ cliPath: pathB });
+
+      const callsAfterPopulate = mockExecFile.mock.calls.length;
+      expect(callsAfterPopulate).toBe(2);
+
+      // Invalidate ONLY pathA
+      clearDiscoveredModelsCache(pathA);
+
+      // Calling pathB should still be cached (no execFile)
+      const cachedB = await discoverAntigravityModels({ cliPath: pathB });
+      expect(cachedB.some((m) => m.id === "model-2")).toBe(true);
+      expect(mockExecFile.mock.calls.length).toBe(callsAfterPopulate);
+
+      // Calling pathA should re-fetch
+      const refreshedA = await discoverAntigravityModels({ cliPath: pathA });
+      expect(refreshedA.some((m) => m.id === "model-1")).toBe(true);
+      expect(mockExecFile.mock.calls.length).toBe(callsAfterPopulate + 1);
+
+      // clearDiscoveredModelsCache() with no args clears all
+      clearDiscoveredModelsCache();
+      await discoverAntigravityModels({ cliPath: pathB });
+      expect(mockExecFile.mock.calls.length).toBe(callsAfterPopulate + 2);
+
+      mockExecFile.mockReset();
+      clearDiscoveredModelsCache();
+    });
+
+    it("returns static models without executing CLI when cliPath is empty or whitespace", async () => {
+      mockExecFile.mockReset();
+      const emptyModels = await discoverAntigravityModels({ cliPath: "   " });
+      expect(emptyModels.length).toBe(14);
+      expect(mockExecFile).not.toHaveBeenCalled();
     });
   });
 
@@ -202,7 +337,7 @@ describe("Antigravity Runtime Adapter", () => {
 
   describe("Bootstrap and Module registration", () => {
     it("is registered as a built-in adapter in bootstrapRuntimeRegistry", async () => {
-      const registry = await bootstrapRuntimeRegistry();
+      const registry = await bootstrapRuntimeRegistry({ antigravityEnabled: true });
       const resolved = registry.resolveRuntime("antigravity");
       expect(resolved).toBeDefined();
       expect(resolved.descriptor.id).toBe("antigravity");

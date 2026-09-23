@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import path from "node:path";
 import type { RuntimeModel } from "../../types.js";
+import { createRuntimeMemoryCache } from "../../cache.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -157,9 +159,16 @@ export const ANTIGRAVITY_MODELS: RuntimeModel[] = [
 export const DEFAULT_ANTIGRAVITY_MODEL = "gemini-3.8-flash-high";
 export const LIGHT_ANTIGRAVITY_MODEL = "gemini-3.8-flash-low";
 
-let cachedModels: RuntimeModel[] | null = null;
-let cachedModelsAt = 0;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export function normalizeCacheKey(cliPath: string, platform: string = process.platform): string {
+  const trimmed = cliPath.trim();
+  const pathModule = platform === "win32" ? path.win32 : path.posix;
+  const normalized = pathModule.normalize(trimmed);
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+const discoveredModelsCache = createRuntimeMemoryCache<RuntimeModel[]>({
+  defaultTtlMs: 5 * 60 * 1000,
+});
 
 export interface DiscoverAntigravityModelsOptions {
   cliPath?: string;
@@ -174,14 +183,17 @@ export interface DiscoverAntigravityModelsOptions {
 export async function discoverAntigravityModels(
   options: DiscoverAntigravityModelsOptions = {},
 ): Promise<RuntimeModel[]> {
-  const now = Date.now();
-  if (!options.forceRefresh && cachedModels && now - cachedModelsAt < CACHE_TTL_MS) {
-    return cachedModels;
-  }
-
-  const cliPath = options.cliPath;
+  const cliPath = options.cliPath?.trim();
   if (!cliPath) {
     return ANTIGRAVITY_MODELS;
+  }
+
+  const cacheKey = normalizeCacheKey(cliPath);
+  if (!options.forceRefresh) {
+    const cached = discoveredModelsCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
   }
 
   try {
@@ -220,18 +232,21 @@ export async function discoverAntigravityModels(
     }
 
     if (parsed.length > 0) {
-      cachedModels = parsed;
-      cachedModelsAt = now;
+      discoveredModelsCache.set(cacheKey, parsed);
       return parsed;
     }
   } catch {
-    // If agy models fails or CLI is unreachable, fall back safely to static registry
+    // If agy models fails or CLI is unreachable, fall back safely to static registry without poisoning cache
   }
 
   return ANTIGRAVITY_MODELS;
 }
 
-export function clearDiscoveredModelsCache(): void {
-  cachedModels = null;
-  cachedModelsAt = 0;
+export function clearDiscoveredModelsCache(cliPath?: string): void {
+  const trimmed = cliPath?.trim();
+  if (trimmed) {
+    discoveredModelsCache.delete(normalizeCacheKey(trimmed));
+  } else {
+    discoveredModelsCache.clear();
+  }
 }

@@ -691,14 +691,32 @@ describe("Antigravity CLI Runner", () => {
       runAntigravityCli(inputCmd, undefined, {
         pathToAntigravityExecutable: "scripts/run.cmd",
       }),
-    ).rejects.toThrow("prohibited to prevent Windows shell injection");
+    ).rejects.toThrow(/is prohibited/);
+
+    await expect(
+      runAntigravityCli(inputCmd, undefined, {
+        pathToAntigravityExecutable: "scripts/run.cmd",
+      }),
+    ).rejects.toMatchObject({
+      adapterCode: "ANTIGRAVITY_SECURITY_VIOLATION",
+      category: "permission",
+    });
 
     const inputBat = createInput();
     await expect(
       runAntigravityCli(inputBat, undefined, {
         pathToAntigravityExecutable: "scripts/run.bat",
       }),
-    ).rejects.toThrow("prohibited to prevent Windows shell injection");
+    ).rejects.toThrow(/is prohibited/);
+
+    await expect(
+      runAntigravityCli(inputBat, undefined, {
+        pathToAntigravityExecutable: "scripts/run.bat",
+      }),
+    ).rejects.toMatchObject({
+      adapterCode: "ANTIGRAVITY_SECURITY_VIOLATION",
+      category: "permission",
+    });
   });
 
   it("rejects with makeProcessRunTimeoutError when process execution times out", async () => {

@@ -362,6 +362,8 @@ App Server operational notes:
 
 ### Google Antigravity (CLI transport)
 
+> **Rollout:** Antigravity adapter registration and project initialization are gated behind the off-by-default `AIF_RUNTIME_ANTIGRAVITY_ENABLED` feature flag. Set `AIF_RUNTIME_ANTIGRAVITY_ENABLED=true` in your `.env` to enable Antigravity in registry bootstrap and `ai-factory init`.
+
 Spawns Google's `agy.exe` (or `agy` binary) as an autonomous agent subprocess with streaming NDJSON output (`--output-format stream-json`). Supports 14 Gemini models with dynamic discovery, context continuation via `--conversation <sessionId>`, and automatic project scaffolding (`supportsProjectInit: true`).
 
 ```json

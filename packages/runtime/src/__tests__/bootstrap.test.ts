@@ -8,7 +8,36 @@ const VALID_USAGE_REPORTING = new Set<string>(Object.values(UsageReporting));
 describe("bootstrapRuntimeRegistry", () => {
   beforeEach(() => {
     delete process.env.AIF_RUNTIME_SESSION_FORK_ENABLED;
+    delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
     resetEnvCache();
+  });
+
+  it("excludes antigravity adapter when AIF_RUNTIME_ANTIGRAVITY_ENABLED is false", async () => {
+    delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+    resetEnvCache();
+    const registry = await bootstrapRuntimeRegistry();
+    expect(registry.listRuntimes().find((r) => r.id === "antigravity")).toBeUndefined();
+  });
+
+  it("includes antigravity adapter when AIF_RUNTIME_ANTIGRAVITY_ENABLED is true", async () => {
+    process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED = "true";
+    resetEnvCache();
+    const registry = await bootstrapRuntimeRegistry();
+    const antigravity = registry.listRuntimes().find((r) => r.id === "antigravity");
+    expect(antigravity).toBeDefined();
+    expect(antigravity?.providerId).toBe("google");
+  });
+
+  it("honors antigravityEnabled option override over environment variable", async () => {
+    process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED = "true";
+    resetEnvCache();
+    const disabledRegistry = await bootstrapRuntimeRegistry({ antigravityEnabled: false });
+    expect(disabledRegistry.listRuntimes().find((r) => r.id === "antigravity")).toBeUndefined();
+
+    delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+    resetEnvCache();
+    const enabledRegistry = await bootstrapRuntimeRegistry({ antigravityEnabled: true });
+    expect(enabledRegistry.listRuntimes().find((r) => r.id === "antigravity")).toBeDefined();
   });
 
   it("creates registry with built-in claude, codex, opencode, and openrouter adapters", async () => {

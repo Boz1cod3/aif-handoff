@@ -18,6 +18,7 @@ import {
   LIGHT_ANTIGRAVITY_MODEL,
   discoverAntigravityModels,
 } from "./models.js";
+import { getEnv } from "@aif/shared";
 import { classifyAntigravityRuntimeError } from "./errors.js";
 
 export type AntigravityRuntimeAdapterLogger = AntigravityCliLogger;
@@ -28,6 +29,7 @@ export interface CreateAntigravityRuntimeAdapterOptions {
   displayName?: string;
   logger?: AntigravityRuntimeAdapterLogger;
   executablePath?: string;
+  supportsProjectInit?: boolean;
 }
 
 const ANTIGRAVITY_CAPABILITIES: RuntimeCapabilities = {
@@ -70,13 +72,16 @@ export function createAntigravityRuntimeAdapter(
   const logger = options.logger ?? createFallbackLogger();
   const executablePath = options.executablePath ?? findAntigravityPath();
 
+  const supportsProjectInit =
+    options.supportsProjectInit ?? getEnv().AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+
   return {
     descriptor: {
       id: runtimeId,
       providerId,
       displayName: options.displayName ?? "Google Antigravity",
-      supportsProjectInit: true,
-      projectInitAgentName: "antigravity",
+      supportsProjectInit,
+      projectInitAgentName: supportsProjectInit ? "antigravity" : undefined,
       lightModel: LIGHT_ANTIGRAVITY_MODEL,
       defaultModelPlaceholder: DEFAULT_ANTIGRAVITY_MODEL,
       defaultTransport: RuntimeTransport.CLI,

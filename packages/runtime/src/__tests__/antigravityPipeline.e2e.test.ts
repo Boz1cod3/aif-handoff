@@ -12,7 +12,7 @@ const hasLiveCli = Boolean(process.env.TEST_ANTIGRAVITY_INTEGRATION);
 describe("Antigravity Pipeline Verification", () => {
   describe("Registration & Security", () => {
     it("1.1 успішно реєструє antigravity в bootstrapRuntimeRegistry", async () => {
-      const registry = await bootstrapRuntimeRegistry();
+      const registry = await bootstrapRuntimeRegistry({ antigravityEnabled: true });
       const adapter = registry.resolveRuntime("antigravity");
       expect(adapter).toBeDefined();
       expect(adapter.descriptor.id).toBe("antigravity");
