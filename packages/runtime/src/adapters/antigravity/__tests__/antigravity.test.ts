@@ -32,6 +32,7 @@ import {
 import * as findPathModule from "../findPath.js";
 import { resolveCliPath } from "../findPath.js";
 import { classifyAntigravityRuntimeError } from "../errors.js";
+import { resetEnvCache } from "@aif/shared";
 import { bootstrapRuntimeRegistry } from "../../../bootstrap.js";
 import { UsageReporting, RuntimeTransport } from "../../../types.js";
 
@@ -337,11 +338,18 @@ describe("Antigravity Runtime Adapter", () => {
 
   describe("Bootstrap and Module registration", () => {
     it("is registered as a built-in adapter in bootstrapRuntimeRegistry", async () => {
-      const registry = await bootstrapRuntimeRegistry({ antigravityEnabled: true });
-      const resolved = registry.resolveRuntime("antigravity");
-      expect(resolved).toBeDefined();
-      expect(resolved.descriptor.id).toBe("antigravity");
-      expect(resolved.descriptor.providerId).toBe("google");
+      process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED = "true";
+      resetEnvCache();
+      try {
+        const registry = await bootstrapRuntimeRegistry();
+        const resolved = registry.resolveRuntime("antigravity");
+        expect(resolved).toBeDefined();
+        expect(resolved.descriptor.id).toBe("antigravity");
+        expect(resolved.descriptor.providerId).toBe("google");
+      } finally {
+        delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+        resetEnvCache();
+      }
     });
 
     it("supports registerRuntimeModule for AIF_RUNTIME_MODULES external loading", () => {

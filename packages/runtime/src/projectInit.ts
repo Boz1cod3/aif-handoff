@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { getEnv, initBaseProjectDirectory, logger } from "@aif/shared";
+import { initBaseProjectDirectory, logger } from "@aif/shared";
 import type { RuntimeRegistry } from "./registry.js";
 
 const log = logger("runtime-project-init");
@@ -144,11 +144,8 @@ export function initProject(options: InitProjectOptions): InitProjectResult {
   // 2. ai-factory init — only for fresh projects
   if (alreadyInitialized) return { ok: true };
 
-  const env = getEnv();
   const descriptors = registry.listRuntimes();
-  const initCapable = descriptors.filter(
-    (d) => d.supportsProjectInit && (d.id !== "antigravity" || env.AIF_RUNTIME_ANTIGRAVITY_ENABLED),
-  );
+  const initCapable = descriptors.filter((d) => d.supportsProjectInit);
   const targets = runtimeIds ? initCapable.filter((d) => runtimeIds.includes(d.id)) : initCapable;
 
   const agentIds = [

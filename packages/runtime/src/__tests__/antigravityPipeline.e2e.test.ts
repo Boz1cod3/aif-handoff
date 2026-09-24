@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
+import { resetEnvCache } from "@aif/shared";
 import { bootstrapRuntimeRegistry } from "../bootstrap.js";
 import { RuntimeTransport, UsageSource } from "../types.js";
 import { createAntigravityRuntimeAdapter } from "../adapters/antigravity/index.js";
@@ -12,13 +13,20 @@ const hasLiveCli = Boolean(process.env.TEST_ANTIGRAVITY_INTEGRATION);
 describe("Antigravity Pipeline Verification", () => {
   describe("Registration & Security", () => {
     it("1.1 успішно реєструє antigravity в bootstrapRuntimeRegistry", async () => {
-      const registry = await bootstrapRuntimeRegistry({ antigravityEnabled: true });
-      const adapter = registry.resolveRuntime("antigravity");
-      expect(adapter).toBeDefined();
-      expect(adapter.descriptor.id).toBe("antigravity");
-      expect(adapter.descriptor.providerId).toBe("google");
-      expect(adapter.descriptor.capabilities.supportsResume).toBe(true);
-      expect(adapter.descriptor.capabilities.supportsModelDiscovery).toBe(true);
+      process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED = "true";
+      resetEnvCache();
+      try {
+        const registry = await bootstrapRuntimeRegistry();
+        const adapter = registry.resolveRuntime("antigravity");
+        expect(adapter).toBeDefined();
+        expect(adapter.descriptor.id).toBe("antigravity");
+        expect(adapter.descriptor.providerId).toBe("google");
+        expect(adapter.descriptor.capabilities.supportsResume).toBe(true);
+        expect(adapter.descriptor.capabilities.supportsModelDiscovery).toBe(true);
+      } finally {
+        delete process.env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
+        resetEnvCache();
+      }
     });
 
     it("1.4 захист від ін'єкцій: блокує виконання .cmd / .bat файлів", async () => {

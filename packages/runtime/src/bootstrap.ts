@@ -23,7 +23,6 @@ export interface BootstrapRuntimeRegistryOptions {
    */
   usageSink?: RuntimeUsageSink;
   modelEffortDiscoveryEnabled?: boolean;
-  antigravityEnabled?: boolean;
 }
 
 /**
@@ -36,7 +35,6 @@ export async function bootstrapRuntimeRegistry(
   options: BootstrapRuntimeRegistryOptions = {},
 ): Promise<RuntimeRegistry> {
   const env = getEnv();
-  const antigravityEnabled = options.antigravityEnabled ?? env.AIF_RUNTIME_ANTIGRAVITY_ENABLED;
 
   const builtInAdapters: RuntimeAdapter[] = [
     createClaudeRuntimeAdapter(),
@@ -45,7 +43,7 @@ export async function bootstrapRuntimeRegistry(
     createOpenRouterRuntimeAdapter(),
   ];
 
-  if (antigravityEnabled) {
+  if (env.AIF_RUNTIME_ANTIGRAVITY_ENABLED) {
     builtInAdapters.push(createAntigravityRuntimeAdapter());
   }
 
